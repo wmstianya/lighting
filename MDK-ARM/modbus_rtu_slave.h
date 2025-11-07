@@ -109,6 +109,7 @@ void     ModbusRTU_Process(ModbusRTU_Slave *mb);
 void     ModbusRTU_TimerISR(ModbusRTU_Slave *mb);     /* ���׳�ʱ�ã���ѡ */
 void     ModbusRTU_UartRxCallback(ModbusRTU_Slave *mb);
 uint16_t ModbusRTU_CRC16(uint8_t *buffer, uint16_t length);
+void     ModbusRTU_TxCpltISR(ModbusRTU_Slave *mb);
 
 /* �û��ص��������壬�����أ� */
 void ModbusRTU_PreWriteCallback(uint16_t addr, uint16_t value);

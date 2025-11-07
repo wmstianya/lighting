@@ -39,7 +39,7 @@ extern ModbusRTU_Slave g_mb2;  /* 串口1 (USART2) */
 
 // USART1 测试模式：0=Modbus, 1=Echo 测试
 #ifndef USART1_TEST_MODE
-#define USART1_TEST_MODE 1
+#define USART1_TEST_MODE 0
 #endif
 
 // 声明TIM3句柄（在usart2_echo_test.c中定义） - 暂时不使用
@@ -298,6 +298,9 @@ void USART1_IRQHandler(void)
     if (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_IDLE) != RESET)
     {
       __HAL_UART_CLEAR_IDLEFLAG(&huart1);
+      /* 清 ORE */
+      volatile uint32_t sr1 = huart1.Instance->SR; (void)sr1;
+      volatile uint32_t dr1 = huart1.Instance->DR; (void)dr1;
       ModbusRTU_UartRxCallback(&g_mb);
     }
   #endif
@@ -339,6 +342,9 @@ void USART2_IRQHandler(void)
     if (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_IDLE) != RESET)
     {
       __HAL_UART_CLEAR_IDLEFLAG(&huart2);
+      /* 清 ORE */
+      volatile uint32_t sr2 = huart2.Instance->SR; (void)sr2;
+      volatile uint32_t dr2 = huart2.Instance->DR; (void)dr2;
       ModbusRTU_UartRxCallback(&g_mb2);
     }
   #endif
@@ -370,6 +376,16 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
       return;
     }
   #endif
+  /* Modbus: 串口2 (USART1) Tx 完成处理 */
+  if (huart == &huart1) {
+    /* 等待 TC，避免过早切 DE */
+    uint32_t t0 = HAL_GetTick();
+    while (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_TC) == RESET) {
+      if ((HAL_GetTick() - t0) > 2U) break;
+    }
+    ModbusRTU_TxCpltISR(&g_mb);
+    return;
+  }
   #if USART2_TEST_MODE == 3
     /* 简单测试模式 - USART2发送完成 */
     if (huart == &huart2) {
@@ -408,23 +424,39 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
   #if USART2_TEST_MODE == 0
     /* 处理串口1 (USART2) - 仅Modbus模式 */
     if (huart == &huart2) {
-      /* Step 1: Switch RS485 to receive mode */
-      HAL_GPIO_WritePin(MB_USART2_RS485_DE_GPIO_Port, MB_USART2_RS485_DE_Pin, GPIO_PIN_RESET);
-      
-      /* Step 2: Clear transmission state flags */
-      g_mb2.txCount = 0;
-      g_mb2.rxComplete = 0;
-      g_mb2.rxCount = 0;
-      g_mb2.frameReceiving = 0;
-      
-      /* Step 3: Restart DMA reception */
-      HAL_UART_Receive_DMA(&huart2, g_mb2.rxBuffer, MB_RTU_FRAME_MAX_SIZE);
+      uint32_t t1 = HAL_GetTick();
+      while (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_TC) == RESET) {
+        if ((HAL_GetTick() - t1) > 2U) break;
+      }
+      ModbusRTU_TxCpltISR(&g_mb2);
+      return;
     }
   #endif
   /* USER CODE END HAL_UART_TxCpltCallback 0 */
   
   /* USER CODE BEGIN HAL_UART_TxCpltCallback 1 */
   /* USER CODE END HAL_UART_TxCpltCallback 1 */
+}
+
+/**
+  * @brief  UART Error callback
+  */
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+  /* 清错误标志：读 SR/DR */
+  volatile uint32_t sr = huart->Instance->SR; (void)sr;
+  volatile uint32_t dr = huart->Instance->DR; (void)dr;
+
+  if (huart == &huart1) {
+    /* Modbus 串口2 恢复接收 */
+    HAL_UART_Receive_DMA(&huart1, g_mb.rxBuffer, MB_RTU_FRAME_MAX_SIZE);
+    return;
+  }
+  if (huart == &huart2 && USART2_TEST_MODE == 0) {
+    /* Modbus 串口1 恢复接收 */
+    HAL_UART_Receive_DMA(&huart2, g_mb2.rxBuffer, MB_RTU_FRAME_MAX_SIZE);
+    return;
+  }
 }
 
 /* USER CODE BEGIN 1 */

@@ -16,7 +16,7 @@
 #include "usart1_echo_test.h"
 
 /* 运行模式选择: 0=Modbus双串口, 1=串口2回环测试, 2=调试模式, 3=简单测试, 4=串口1回环测试 */
-#define RUN_MODE_ECHO_TEST 4
+#define RUN_MODE_ECHO_TEST 0
 
 /* ---------------- 外设句柄 ---------------- */
 UART_HandleTypeDef huart1;  /* 串口2: PA9/PA10 */
