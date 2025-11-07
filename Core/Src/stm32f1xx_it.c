@@ -26,14 +26,16 @@
 #include "usart1_echo_test.h"
 #include "usart2_echo_test_debug.h"
 #include "usart2_simple_test.h"
-// #include "app_config.h"  // 文件不存在，注释掉
+#include "app_config.h"  // 配置文件
 
 // 声明全局 Modbus 实例在main.c中定义
 extern ModbusRTU_Slave g_mb;   /* 串口2 (USART1) */
 extern ModbusRTU_Slave g_mb2;  /* 串口1 (USART2) */
 
 /* 从 main.c 获取运行模式定义 */
+#ifndef RUN_MODE_ECHO_TEST
 #define RUN_MODE_ECHO_TEST 4  /* 串口1回环测试模式 */
+#endif
 
 /* 根据 RUN_MODE_ECHO_TEST 自动映射中断处理模式 */
 #if   RUN_MODE_ECHO_TEST == 1
@@ -388,17 +390,29 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
       return;
     }
   #endif
+<<<<<<< HEAD
   /* Modbus: 串口2 (USART1) Tx 完成处理 - 暂时注释，函数未定义
   if (huart == &huart1) {
     // 等待 TC，避免过早切 DE
+=======
+  /* Modbus: 串口2 (USART1) Tx 完成处理 */
+  if (huart == &huart1) {
+    /* 等待 TC，避免过早切 DE */
+>>>>>>> 8e93f9eeb58c1c3f7e641ce5fce2fd7339e9bc3e
     uint32_t t0 = HAL_GetTick();
     while (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_TC) == RESET) {
       if ((HAL_GetTick() - t0) > 2U) break;
     }
+<<<<<<< HEAD
     // ModbusRTU_TxCpltISR(&g_mb);  // 函数未定义
     return;
   }
   */
+=======
+    ModbusRTU_TxCpltISR(&g_mb);
+    return;
+  }
+>>>>>>> 8e93f9eeb58c1c3f7e641ce5fce2fd7339e9bc3e
   #if USART2_TEST_MODE == 3
     /* 简单测试模式 - USART2发送完成 */
     if (huart == &huart2) {
@@ -441,7 +455,11 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
       while (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_TC) == RESET) {
         if ((HAL_GetTick() - t1) > 2U) break;
       }
+<<<<<<< HEAD
       // ModbusRTU_TxCpltISR(&g_mb2);  // 函数未定义
+=======
+      ModbusRTU_TxCpltISR(&g_mb2);
+>>>>>>> 8e93f9eeb58c1c3f7e641ce5fce2fd7339e9bc3e
       return;
     }
   #endif

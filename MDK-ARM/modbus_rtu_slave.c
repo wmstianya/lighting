@@ -343,6 +343,9 @@ void ModbusRTU_TimerISR(ModbusRTU_Slave *mb)
 void ModbusRTU_UartRxCallback(ModbusRTU_Slave *mb)
 {
     HAL_UART_DMAStop(mb->huart);
+    /* 清 ORE：读 SR 再读 DR（F1系列） */
+    volatile uint32_t sr = mb->huart->Instance->SR; (void)sr;
+    volatile uint32_t dr = mb->huart->Instance->DR; (void)dr;
     mb->rxCount = MB_RTU_FRAME_MAX_SIZE - __HAL_DMA_GET_COUNTER(mb->huart->hdmarx);
     mb->rxComplete = 1;
     mb->frameReceiving = 0;
@@ -399,3 +402,14 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
     }
 }
 #endif /* MB_PROVIDE_IRQ_HANDLERS */
+
+/* ---------- 外部供中断回调使用的 Tx 完成收尾 ---------- */
+void ModbusRTU_TxCpltISR(ModbusRTU_Slave *mb)
+{
+    if (mb == NULL || mb->huart == NULL) return;
+    /* 切回接收并重启 DMA */
+    RS485_RxEnable(mb->huart);
+    s_txInProgress = 0;
+    mb->txCount = 0;
+    MB_RestartRx(mb);
+}
