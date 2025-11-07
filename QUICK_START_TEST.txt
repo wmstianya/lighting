@@ -1,0 +1,155 @@
+================================================================================
+  双串口回环测试 - 快速集成代码
+================================================================================
+
+【步骤1】在 main.c 顶部添加头文件
+------------------------------------------------------------
+#include "uart_loopback_test.h"
+
+
+【步骤2】在 main() 函数的 while(1) 循环之前添加以下代码
+------------------------------------------------------------
+
+    /* ========== 回环测试 - 开始 ========== */
+    TestResult testResult = {0};
+    loopbackTestInit(&huart1, &huart2);
+    
+    // LED快闪3次表示开始测试
+    for (int i = 0; i < 3; i++) {
+        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+        HAL_Delay(150);
+        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
+        HAL_Delay(150);
+    }
+    HAL_Delay(500);
+    
+    // 执行RS485方向控制测试（最重要）
+    if (loopbackTestRun(TEST_MODE_RS485_DIRECTION, &testResult)) {
+        // 测试通过：LED快闪5次
+        for (int i = 0; i < 5; i++) {
+            HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+            HAL_Delay(100);
+            HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
+            HAL_Delay(100);
+        }
+    } else {
+        // 测试失败：LED常亮，停止运行
+        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+        while(1) {
+            HAL_Delay(1000);  // 死循环，需要复位
+        }
+    }
+    
+    HAL_Delay(1000);
+    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);  // LED熄灭
+    /* ========== 回环测试 - 结束 ========== */
+
+
+【步骤3】编译项目
+------------------------------------------------------------
+1. 将以下文件添加到Keil项目：
+   - Core/Inc/uart_loopback_test.h
+   - Core/Src/uart_loopback_test.c
+
+2. 按 F7 编译
+
+3. 确保无错误、无警告
+
+
+【步骤4】烧录并观察LED
+------------------------------------------------------------
+预期现象：
+  1. LED快闪3次（启动测试）
+  2. 暂停0.5秒
+  3. LED快闪5次（测试通过）✅
+  4. LED熄灭，进入正常Modbus工作
+
+如果LED常亮：
+  - 测试失败 ❌
+  - 检查 PA4 和 PA8 的GPIO配置
+  - 查看 LOOPBACK_TEST_GUIDE.md 故障排查章节
+
+
+【可选】添加更多测试
+------------------------------------------------------------
+
+// 如果需要测试UART硬件功能（需要TX-RX短接）
+/*
+memset(&testResult, 0, sizeof(testResult));
+if (loopbackTestRun(TEST_MODE_HARDWARE_LOOPBACK, &testResult)) {
+    // 硬件回环测试通过
+}
+*/
+
+// 如果需要测试双串口交叉（需要交叉连线）
+/*
+memset(&testResult, 0, sizeof(testResult));
+if (loopbackTestRun(TEST_MODE_DUAL_UART_CROSSOVER, &testResult)) {
+    // 交叉测试通过
+}
+*/
+
+// 如果需要压力测试
+/*
+memset(&testResult, 0, sizeof(testResult));
+if (loopbackTestStress(1000, &testResult)) {
+    // 压力测试通过，成功率 >= 99%
+}
+*/
+
+
+【调试技巧】通过调试器查看测试结果
+------------------------------------------------------------
+在测试代码后添加断点，查看 testResult 变量：
+
+testResult.totalTests    - 总测试数
+testResult.passedTests   - 通过数
+testResult.failedTests   - 失败数
+testResult.lastError     - 错误信息（如果有）
+
+例如：
+  totalTests   = 2
+  passedTests  = 2
+  failedTests  = 0
+  lastError    = ""      ← 空字符串表示无错误
+
+
+【生产环境建议】
+------------------------------------------------------------
+1. 在 Release 版本中禁用测试：
+   #ifdef DEBUG
+       loopbackTestInit(...);
+       // 测试代码
+   #endif
+
+2. 或使用编译宏控制：
+   #if ENABLE_LOOPBACK_TEST
+       // 测试代码
+   #endif
+
+3. 测试通过后，可以注释掉测试代码以加快启动速度
+
+
+【常见问题】
+------------------------------------------------------------
+Q: LED一直不亮？
+A: 检查PC13的GPIO初始化，确保配置为输出模式
+
+Q: 测试失败（LED常亮）？
+A: 最可能的原因是PA4或PA8未配置为推挽输出，检查MX_GPIO_Init()
+
+Q: 编译错误找不到uart_loopback_test.h？
+A: 确保文件已添加到项目中，或检查包含路径配置
+
+Q: 想要更详细的测试？
+A: 查看 LOOPBACK_TEST_GUIDE.md 完整文档
+
+
+【技术支持】
+------------------------------------------------------------
+详细文档: LOOPBACK_TEST_GUIDE.md
+测试示例: main_test_example.c
+单元测试: MODBUS_RTU_UART_TEST_PLAN.md
+
+================================================================================
+

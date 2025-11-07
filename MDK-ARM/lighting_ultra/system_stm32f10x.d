@@ -1,0 +1,9 @@
+lighting_ultra\system_stm32f10x.o: RTE\Device\STM32F103C8\system_stm32f10x.c
+lighting_ultra\system_stm32f10x.o: C:\Keil_v5\ARM\PACK\Device\Include\stm32f10x.h
+lighting_ultra\system_stm32f10x.o: E:\data\lighting_ultra\lighting_ultra\MDK-ARM\RTE\RTE_Components.h
+lighting_ultra\system_stm32f10x.o: ../Drivers/CMSIS/Include/core_cm3.h
+lighting_ultra\system_stm32f10x.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdint.h
+lighting_ultra\system_stm32f10x.o: ../Drivers/CMSIS/Include/cmsis_version.h
+lighting_ultra\system_stm32f10x.o: ../Drivers/CMSIS/Include/cmsis_compiler.h
+lighting_ultra\system_stm32f10x.o: ../Drivers/CMSIS/Include/cmsis_armcc.h
+lighting_ultra\system_stm32f10x.o: C:\Keil_v5\ARM\PACK\Device\Include\system_stm32f10x.h
