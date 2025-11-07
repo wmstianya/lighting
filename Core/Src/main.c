@@ -13,9 +13,10 @@
 #include "usart2_echo_test.h"
 #include "usart2_echo_test_debug.h"
 #include "usart2_simple_test.h"
+#include "usart1_echo_test.h"
 
-/* 运行模式选择: 0=Modbus双串口, 1=串口2回环测试, 2=调试模式, 3=简单测试 */
-#define RUN_MODE_ECHO_TEST 1
+/* 运行模式选择: 0=Modbus双串口, 1=串口2回环测试, 2=调试模式, 3=简单测试, 4=串口1回环测试 */
+#define RUN_MODE_ECHO_TEST 4
 
 /* ---------------- 外设句柄 ---------------- */
 UART_HandleTypeDef huart1;  /* 串口2: PA9/PA10 */
@@ -64,7 +65,7 @@ int main(void)
 
     /* 使能 USART IDLE 中断 */
     __HAL_UART_ENABLE_IT(&huart1, UART_IT_IDLE);
-    #if RUN_MODE_ECHO_TEST != 2
+    #if (RUN_MODE_ECHO_TEST != 2) && (RUN_MODE_ECHO_TEST != 4)
         __HAL_UART_ENABLE_IT(&huart2, UART_IT_IDLE);
     #endif
 
@@ -100,6 +101,9 @@ int main(void)
     #elif RUN_MODE_ECHO_TEST == 1
         /* 串口2回环测试模式 */
         usart2EchoTestRun();
+    #elif RUN_MODE_ECHO_TEST == 4
+        /* 串口1回环测试模式 */
+        usart1EchoTestRun();
     #else
         /* Modbus双串口模式 */
         while (1) {

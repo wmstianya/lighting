@@ -23,6 +23,7 @@
 #include "stm32f1xx_hal_tim.h"
 #include "../../MDK-ARM/modbus_rtu_slave.h"
 #include "usart2_echo_test.h"
+#include "usart1_echo_test.h"
 #include "usart2_echo_test_debug.h"
 #include "usart2_simple_test.h"
 
@@ -31,7 +32,15 @@ extern ModbusRTU_Slave g_mb;   /* 串口2 (USART1) */
 extern ModbusRTU_Slave g_mb2;  /* 串口1 (USART2) */
 
 // 测试模式选择: 0=Modbus, 1=Echo测试, 2=调试, 3=简单测试
-#define USART2_TEST_MODE 1
+// 当使用 USART1 回环测试时，将 USART2_TEST_MODE 置 0 避免干扰
+#ifndef USART2_TEST_MODE
+#define USART2_TEST_MODE 0
+#endif
+
+// USART1 测试模式：0=Modbus, 1=Echo 测试
+#ifndef USART1_TEST_MODE
+#define USART1_TEST_MODE 1
+#endif
 
 // 声明TIM3句柄（在usart2_echo_test.c中定义） - 暂时不使用
 // #if USART2_TEST_MODE == 1 || USART2_TEST_MODE == 2
@@ -279,11 +288,19 @@ void DMA1_Channel7_IRQHandler(void)
 void USART1_IRQHandler(void)
 {
   /* USER CODE BEGIN USART1_IRQn 0 */
-  if (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_IDLE) != RESET)
-  {
-    __HAL_UART_CLEAR_IDLEFLAG(&huart1);
-    ModbusRTU_UartRxCallback(&g_mb);
-  }
+  #if USART1_TEST_MODE == 1
+    if (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_IDLE) != RESET)
+    {
+      __HAL_UART_CLEAR_IDLEFLAG(&huart1);
+      usart1EchoHandleIdle();
+    }
+  #else
+    if (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_IDLE) != RESET)
+    {
+      __HAL_UART_CLEAR_IDLEFLAG(&huart1);
+      ModbusRTU_UartRxCallback(&g_mb);
+    }
+  #endif
   /* USER CODE END USART1_IRQn 0 */
   HAL_UART_IRQHandler(&huart1);
   /* USER CODE BEGIN USART1_IRQn 1 */
@@ -347,6 +364,12 @@ void USART2_IRQHandler(void)
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
   /* USER CODE BEGIN HAL_UART_TxCpltCallback 0 */
+  #if USART1_TEST_MODE == 1
+    if (huart == &huart1) {
+      usart1EchoTxCallback(huart);
+      return;
+    }
+  #endif
   #if USART2_TEST_MODE == 3
     /* 简单测试模式 - USART2发送完成 */
     if (huart == &huart2) {
