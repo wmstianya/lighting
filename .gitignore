@@ -1,0 +1,44 @@
+# Keil uVision / ARMCC build artifacts
+*.axf
+*.hex
+*.htm
+*.html
+*.map
+*.o
+*.obj
+*.d
+*.crf
+*.lst
+*.lnp
+*.sct
+*.Bak
+*.dep
+*.uvtmp
+*.scvd
+
+# Keil user-specific files (do not version)
+*.uvguix.*
+*.uvgui.*
+*.uvoptx
+*.uvprojx.bak
+
+# MDK-ARM build output folders
+MDK-ARM/**/Objects/**
+MDK-ARM/**/Listings/**
+MDK-ARM/lighting_ultra/**
+MDK-ARM/DebugConfig/**
+
+# IDE logs and workspace noise
+MDK-ARM/.vscode/**
+**/*.log
+**/*.log.lock
+
+# Python cache (tools/tests)
+**/__pycache__/
+**/*.pyc
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+
