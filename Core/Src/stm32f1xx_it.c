@@ -26,19 +26,27 @@
 #include "usart1_echo_test.h"
 #include "usart2_echo_test_debug.h"
 #include "usart2_simple_test.h"
+#include "app_config.h"
 
 // 声明全局 Modbus 实例在main.c中定义
 extern ModbusRTU_Slave g_mb;   /* 串口2 (USART1) */
 extern ModbusRTU_Slave g_mb2;  /* 串口1 (USART2) */
 
-// 测试模式选择: 0=Modbus, 1=Echo测试, 2=调试, 3=简单测试
-// 当使用 USART1 回环测试时，将 USART2_TEST_MODE 置 0 避免干扰
-#ifndef USART2_TEST_MODE
+/* 根据 RUN_MODE_ECHO_TEST 自动映射中断处理模式 */
+#if   RUN_MODE_ECHO_TEST == 1
+#define USART2_TEST_MODE 1
+#define USART1_TEST_MODE 0
+#elif RUN_MODE_ECHO_TEST == 2
+#define USART2_TEST_MODE 2
+#define USART1_TEST_MODE 0
+#elif RUN_MODE_ECHO_TEST == 3
+#define USART2_TEST_MODE 3
+#define USART1_TEST_MODE 0
+#elif RUN_MODE_ECHO_TEST == 4
 #define USART2_TEST_MODE 0
-#endif
-
-// USART1 测试模式：0=Modbus, 1=Echo 测试
-#ifndef USART1_TEST_MODE
+#define USART1_TEST_MODE 1
+#else
+#define USART2_TEST_MODE 0
 #define USART1_TEST_MODE 0
 #endif
 
