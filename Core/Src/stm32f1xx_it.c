@@ -298,9 +298,6 @@ void USART1_IRQHandler(void)
     if (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_IDLE) != RESET)
     {
       __HAL_UART_CLEAR_IDLEFLAG(&huart1);
-      /* 清 ORE */
-      volatile uint32_t sr1 = huart1.Instance->SR; (void)sr1;
-      volatile uint32_t dr1 = huart1.Instance->DR; (void)dr1;
       ModbusRTU_UartRxCallback(&g_mb);
     }
   #endif
@@ -342,9 +339,6 @@ void USART2_IRQHandler(void)
     if (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_IDLE) != RESET)
     {
       __HAL_UART_CLEAR_IDLEFLAG(&huart2);
-      /* 清 ORE */
-      volatile uint32_t sr2 = huart2.Instance->SR; (void)sr2;
-      volatile uint32_t dr2 = huart2.Instance->DR; (void)dr2;
       ModbusRTU_UartRxCallback(&g_mb2);
     }
   #endif
