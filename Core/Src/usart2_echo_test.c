@@ -72,7 +72,15 @@ void usart2EchoTestInit(void)
     __HAL_UART_ENABLE_IT(&huart2, UART_IT_IDLE);
     
     /* 启动DMA接收 */
-    HAL_UART_Receive_DMA(&huart2, echoRxBuffer, ECHO_BUFFER_SIZE);
+    HAL_StatusTypeDef status = HAL_UART_Receive_DMA(&huart2, echoRxBuffer, ECHO_BUFFER_SIZE);
+    
+    /* 诊断：如果DMA启动失败，LED快闪10次 */
+    if (status != HAL_OK) {
+        for (int i = 0; i < 10; i++) {
+            HAL_GPIO_TogglePin(DIAG_LED_PORT, DIAG_LED_PIN);
+            HAL_Delay(100);
+        }
+    }
 }
 
 /**
@@ -97,6 +105,10 @@ void usart2EchoHandleIdle(void)
     
     if (echoRxCount > 0) {
         echoDataReady = 1;
+        /* 不在这里重启DMA，等待主循环处理完数据后重启 */
+    } else {
+        /* 如果没有接收到数据，立即重启DMA继续接收 */
+        HAL_UART_Receive_DMA(&huart2, echoRxBuffer, ECHO_BUFFER_SIZE);
     }
     
     HAL_GPIO_WritePin(DIAG_LED_PORT, DIAG_LED_PIN, GPIO_PIN_SET);
@@ -112,11 +124,9 @@ void usart2EchoProcess(void)
     
     /* LED慢闪表示主循环运行 */
     static uint32_t lastBlink = 0;
-    if (HAL_GetTick() - lastBlink > 5000) {
+    if (HAL_GetTick() - lastBlink > 1000) {
         lastBlink = HAL_GetTick();
-        HAL_GPIO_WritePin(DIAG_LED_PORT, DIAG_LED_PIN, GPIO_PIN_RESET);
-        HAL_Delay(50);
-        HAL_GPIO_WritePin(DIAG_LED_PORT, DIAG_LED_PIN, GPIO_PIN_SET);
+        HAL_GPIO_TogglePin(DIAG_LED_PORT, DIAG_LED_PIN);
     }
     
     if (!echoDataReady) {
@@ -129,34 +139,24 @@ void usart2EchoProcess(void)
     /* 立即复制数据到发送缓冲区（避免被覆盖） */
     memcpy(echoTxBuffer, echoRxBuffer, rxLen);
     
-    /* 清除接收标志，准备下一帧（提前清除，提高响应速度） */
+    /* 清除接收标志和缓冲区 */
     echoDataReady = 0;
     echoRxCount = 0;
     memset(echoRxBuffer, 0, ECHO_BUFFER_SIZE);
     
-    /* 重启DMA接收（立即启动，避免丢失后续数据） */
-    HAL_UART_Receive_DMA(&huart2, echoRxBuffer, ECHO_BUFFER_SIZE);
-    
     /* 切换RS485到发送模式 */
     HAL_GPIO_WritePin(ECHO_RS485_PORT, ECHO_RS485_PIN, GPIO_PIN_SET);
-    HAL_Delay(1); // RS485切换延时
+    
+    /* 小延时确保RS485切换稳定 */
+    for(volatile uint32_t i = 0; i < 100; i++); // 约10us延时
     
     /* DMA异步发送（不阻塞CPU） */
     echoTxComplete = 0;
     diagDmaTxCount++;
     HAL_UART_Transmit_DMA(&huart2, echoTxBuffer, rxLen);
     
-    /* LED闪烁3次表示发送启动 */
-    for (uint8_t i = 0; i < 3; i++) {
-        HAL_GPIO_WritePin(DIAG_LED_PORT, DIAG_LED_PIN, GPIO_PIN_RESET);
-        for(volatile int j = 0; j < 5000; j++);
-        HAL_GPIO_WritePin(DIAG_LED_PORT, DIAG_LED_PIN, GPIO_PIN_SET);
-        for(volatile int j = 0; j < 5000; j++);
-    }
-    
+    /* 注意：DMA接收将在发送完成回调中重启 */
     /* 发送完成后会自动调用 HAL_UART_TxCpltCallback */
-    /* TxCallback会启动TIM3定时器，200us后自动切换RS485 */
-    /* CPU完全释放，可以处理其他任务 */
 }
 
 /**
@@ -233,6 +233,12 @@ void usart2EchoTxCallback(UART_HandleTypeDef *huart)
         /* 切换RS485回接收模式（DE=LOW） */
         HAL_GPIO_WritePin(ECHO_RS485_PORT, ECHO_RS485_PIN, GPIO_PIN_RESET);
         
+        /* 重要：立即重启DMA接收，准备接收下一帧数据 */
+        HAL_UART_Receive_DMA(&huart2, echoRxBuffer, ECHO_BUFFER_SIZE);
+        
+        /* 标记发送完成 */
+        echoTxComplete = 1;
+        
         /* LED熄灭表示切换完成 */
         HAL_GPIO_WritePin(DIAG_LED_PORT, DIAG_LED_PIN, GPIO_PIN_SET);
     }
@@ -264,6 +270,20 @@ void usart2EchoTestRun(void)
         HAL_GPIO_WritePin(DIAG_LED_PORT, DIAG_LED_PIN, GPIO_PIN_SET);
         HAL_Delay(200);
     }
+    
+    /* 注释掉测试发送，避免干扰正常的回环测试 */
+    /* 
+    HAL_Delay(500);
+    const char *test = "Test OK\r\n";
+    HAL_GPIO_WritePin(ECHO_RS485_PORT, ECHO_RS485_PIN, GPIO_PIN_SET);
+    HAL_Delay(1);
+    HAL_UART_Transmit(&huart2, (uint8_t*)test, strlen(test), 100);
+    HAL_Delay(1);
+    HAL_GPIO_WritePin(ECHO_RS485_PORT, ECHO_RS485_PIN, GPIO_PIN_RESET);
+    */
+    
+    /* 确保开始时RS485处于接收模式 */
+    HAL_GPIO_WritePin(ECHO_RS485_PORT, ECHO_RS485_PIN, GPIO_PIN_RESET);
     
     while (1) {
         usart2EchoProcess();        // 使用纯净版本（推荐）

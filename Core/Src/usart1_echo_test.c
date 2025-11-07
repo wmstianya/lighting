@@ -66,6 +66,10 @@ void usart1EchoHandleIdle(void)
     echo1RxCount = ECHO1_BUFFER_SIZE - __HAL_DMA_GET_COUNTER(&hdma_usart1_rx);
     if (echo1RxCount > 0) {
         echo1DataReady = 1;
+        /* 不在这里重启DMA，等待主循环处理完数据后重启 */
+    } else {
+        /* 如果没有接收到数据，立即重启DMA继续接收 */
+        HAL_UART_Receive_DMA(&huart1, echo1RxBuffer, ECHO1_BUFFER_SIZE);
     }
 
     HAL_GPIO_WritePin(ECHO1_LED_PORT, ECHO1_LED_PIN, GPIO_PIN_SET);
@@ -83,13 +87,16 @@ void usart1EchoProcess(void)
     echo1RxCount = 0;
     memset(echo1RxBuffer, 0, sizeof(echo1RxBuffer));
 
-    /* 先重启接收，降低空窗 */
-    HAL_UART_Receive_DMA(&huart1, echo1RxBuffer, ECHO1_BUFFER_SIZE);
-
-    /* 发送回环 */
+    /* 切换RS485到发送模式 */
     HAL_GPIO_WritePin(ECHO1_RS485_PORT, ECHO1_RS485_PIN, GPIO_PIN_SET);
-    HAL_Delay(1);
+    
+    /* 小延时确保RS485切换稳定 */
+    for(volatile uint32_t i = 0; i < 100; i++); // 约10us延时
+    
+    /* DMA异步发送 */
     HAL_UART_Transmit_DMA(&huart1, echo1TxBuffer, rxLen);
+    
+    /* 注意：DMA接收将在发送完成回调中重启 */
 }
 
 void usart1EchoTxCallback(UART_HandleTypeDef *huart)
@@ -104,7 +111,12 @@ void usart1EchoTxCallback(UART_HandleTypeDef *huart)
             if ((HAL_GetTick() - t0) > 2U) break;
         }
 
+        /* 切换RS485回接收模式 */
         HAL_GPIO_WritePin(ECHO1_RS485_PORT, ECHO1_RS485_PIN, GPIO_PIN_RESET);
+        
+        /* 重要：立即重启DMA接收，准备接收下一帧数据 */
+        HAL_UART_Receive_DMA(&huart1, echo1RxBuffer, ECHO1_BUFFER_SIZE);
+        
         HAL_GPIO_WritePin(ECHO1_LED_PORT, ECHO1_LED_PIN, GPIO_PIN_SET);
     }
 }
