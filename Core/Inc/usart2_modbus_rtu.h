@@ -36,6 +36,11 @@ void modbusTxCallback(UART_HandleTypeDef *huart);
 /* 寄存器操作 */
 uint16_t modbusReadReg(uint16_t addr);
 void modbusWriteReg(uint16_t addr, uint16_t value);
+uint16_t modbusReadInputReg(uint16_t addr);
+
+/* 线圈操作 */
+uint8_t modbusReadCoil(uint16_t addr);
+void modbusWriteCoil(uint16_t addr, uint8_t value);
 
 /* 获取统计信息 */
 ModbusStats* modbusGetStats(void);

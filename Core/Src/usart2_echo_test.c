@@ -18,14 +18,22 @@ extern DMA_HandleTypeDef hdma_usart2_tx;
 /* ==================== Modbus RTU配置 ==================== */
 #define MODBUS_SLAVE_ADDRESS    0x01        /* 从站地址 */
 #define MODBUS_BUFFER_SIZE      256          /* 缓冲区大小 */
-#define MODBUS_REG_COUNT        100          /* 寄存器数量 */
+#define MODBUS_REG_COUNT        100          /* 保持寄存器数量 */
+#define MODBUS_INPUT_REG_COUNT  50           /* 输入寄存器数量 */
+#define MODBUS_COIL_COUNT       80           /* 线圈数量(可控制80个开关) */
+#define MODBUS_DISCRETE_COUNT   40           /* 离散输入数量 */
 #define MODBUS_FRAME_TIMEOUT    5            /* 帧超时(ms) */
 #define MODBUS_MIN_FRAME_SIZE   4            /* 最小帧长度 */
 
 /* Modbus功能码定义 */
-#define MODBUS_FC_READ_HOLDING_REGS     0x03   /* 读保持寄存器 */
-#define MODBUS_FC_WRITE_SINGLE_REG      0x06   /* 写单个寄存器 */
-#define MODBUS_FC_WRITE_MULTIPLE_REGS   0x10   /* 写多个寄存器 */
+#define MODBUS_FC_READ_COILS             0x01   /* 读线圈 */
+#define MODBUS_FC_READ_DISCRETE_INPUTS   0x02   /* 读离散输入 */
+#define MODBUS_FC_READ_HOLDING_REGS      0x03   /* 读保持寄存器 */
+#define MODBUS_FC_READ_INPUT_REGS        0x04   /* 读输入寄存器 */
+#define MODBUS_FC_WRITE_SINGLE_COIL      0x05   /* 写单个线圈 */
+#define MODBUS_FC_WRITE_SINGLE_REG       0x06   /* 写单个寄存器 */
+#define MODBUS_FC_WRITE_MULTIPLE_COILS   0x0F   /* 写多个线圈 */
+#define MODBUS_FC_WRITE_MULTIPLE_REGS    0x10   /* 写多个寄存器 */
 
 /* Modbus异常码定义 */
 #define MODBUS_EX_ILLEGAL_FUNCTION      0x01
@@ -61,7 +69,12 @@ typedef struct {
 /* ==================== 全局变量 ==================== */
 static uint8_t modbusRxBuffer[MODBUS_BUFFER_SIZE];
 static uint8_t modbusTxBuffer[MODBUS_BUFFER_SIZE];
-static uint16_t modbusHoldingRegs[MODBUS_REG_COUNT];  /* 保持寄存器 */
+
+/* Modbus数据存储 */
+static uint16_t modbusHoldingRegs[MODBUS_REG_COUNT];      /* 保持寄存器(可读写) */
+static uint16_t modbusInputRegs[MODBUS_INPUT_REG_COUNT];  /* 输入寄存器(只读) */
+static uint8_t modbusCoils[(MODBUS_COIL_COUNT + 7) / 8];  /* 线圈(位存储) */
+static uint8_t modbusDiscreteInputs[(MODBUS_DISCRETE_COUNT + 7) / 8]; /* 离散输入(位存储) */
 
 static volatile uint16_t modbusRxLen = 0;
 static volatile uint8_t modbusFrameReady = 0;
@@ -182,7 +195,97 @@ static void modbusSendException(uint8_t funcCode, uint8_t exCode)
     modbusState = MODBUS_STATE_SENDING;
 }
 
+/* ==================== 位操作辅助函数 ==================== */
+/**
+ * @brief 获取线圈状态
+ * @param coilAddr 线圈地址
+ * @return 线圈状态(0或1)
+ */
+static uint8_t modbusGetCoil(uint16_t coilAddr)
+{
+    if (coilAddr >= MODBUS_COIL_COUNT) return 0;
+    uint16_t byteIndex = coilAddr / 8;
+    uint8_t bitIndex = coilAddr % 8;
+    return (modbusCoils[byteIndex] >> bitIndex) & 0x01;
+}
+
+/**
+ * @brief 设置线圈状态
+ * @param coilAddr 线圈地址
+ * @param value 线圈状态(0或1)
+ */
+static void modbusSetCoil(uint16_t coilAddr, uint8_t value)
+{
+    if (coilAddr >= MODBUS_COIL_COUNT) return;
+    uint16_t byteIndex = coilAddr / 8;
+    uint8_t bitIndex = coilAddr % 8;
+    if (value) {
+        modbusCoils[byteIndex] |= (1 << bitIndex);
+    } else {
+        modbusCoils[byteIndex] &= ~(1 << bitIndex);
+    }
+}
+
+/**
+ * @brief 获取离散输入状态
+ * @param inputAddr 输入地址
+ * @return 输入状态(0或1)
+ */
+static uint8_t modbusGetDiscreteInput(uint16_t inputAddr)
+{
+    if (inputAddr >= MODBUS_DISCRETE_COUNT) return 0;
+    uint16_t byteIndex = inputAddr / 8;
+    uint8_t bitIndex = inputAddr % 8;
+    return (modbusDiscreteInputs[byteIndex] >> bitIndex) & 0x01;
+}
+
 /* ==================== Modbus功能码处理 ==================== */
+/**
+ * @brief 处理功能码01 - 读线圈
+ * @param frame 接收帧
+ * @return 响应长度
+ */
+static uint16_t modbusHandleReadCoils(uint8_t *frame)
+{
+    uint16_t startAddr = (frame[2] << 8) | frame[3];
+    uint16_t coilCount = (frame[4] << 8) | frame[5];
+    uint8_t byteCount;
+    uint16_t i;
+    
+    /* 检查地址范围 */
+    if (startAddr >= MODBUS_COIL_COUNT || 
+        (startAddr + coilCount) > MODBUS_COIL_COUNT ||
+        coilCount == 0 || coilCount > 2000) {
+        modbusSendException(MODBUS_FC_READ_COILS, MODBUS_EX_ILLEGAL_DATA_ADDRESS);
+        return 0;
+    }
+    
+    /* 构建响应 */
+    modbusTxBuffer[0] = MODBUS_SLAVE_ADDRESS;
+    modbusTxBuffer[1] = MODBUS_FC_READ_COILS;
+    byteCount = (coilCount + 7) / 8;  /* 计算需要的字节数 */
+    modbusTxBuffer[2] = byteCount;
+    
+    /* 清空数据区 */
+    for (i = 0; i < byteCount; i++) {
+        modbusTxBuffer[3 + i] = 0;
+    }
+    
+    /* 填充线圈状态 */
+    for (i = 0; i < coilCount; i++) {
+        if (modbusGetCoil(startAddr + i)) {
+            uint8_t byteIndex = i / 8;
+            uint8_t bitIndex = i % 8;
+            modbusTxBuffer[3 + byteIndex] |= (1 << bitIndex);
+        }
+    }
+    
+    /* 添加CRC */
+    modbusAddCrc(modbusTxBuffer, 3 + byteCount);
+    
+    return 3 + byteCount + 2;  /* 头部3字节 + 数据 + CRC2字节 */
+}
+
 /**
  * @brief 处理功能码03 - 读保持寄存器
  * @param frame 接收帧
@@ -220,6 +323,77 @@ static uint16_t modbusHandleReadHoldingRegs(uint8_t *frame)
     modbusAddCrc(modbusTxBuffer, 3 + byteCount);
     
     return 3 + byteCount + 2;  /* 头部3字节 + 数据 + CRC2字节 */
+}
+
+/**
+ * @brief 处理功能码04 - 读输入寄存器
+ * @param frame 接收帧
+ * @return 响应长度
+ */
+static uint16_t modbusHandleReadInputRegs(uint8_t *frame)
+{
+    uint16_t startAddr = (frame[2] << 8) | frame[3];
+    uint16_t regCount = (frame[4] << 8) | frame[5];
+    uint16_t i;
+    uint8_t byteCount;
+    
+    /* 检查地址范围 */
+    if (startAddr >= MODBUS_INPUT_REG_COUNT || 
+        (startAddr + regCount) > MODBUS_INPUT_REG_COUNT ||
+        regCount == 0 || regCount > 125) {
+        modbusSendException(MODBUS_FC_READ_INPUT_REGS, MODBUS_EX_ILLEGAL_DATA_ADDRESS);
+        return 0;
+    }
+    
+    /* 构建响应 */
+    modbusTxBuffer[0] = MODBUS_SLAVE_ADDRESS;
+    modbusTxBuffer[1] = MODBUS_FC_READ_INPUT_REGS;
+    byteCount = regCount * 2;
+    modbusTxBuffer[2] = byteCount;
+    
+    /* 复制寄存器数据 */
+    for (i = 0; i < regCount; i++) {
+        uint16_t regValue = modbusInputRegs[startAddr + i];
+        modbusTxBuffer[3 + i * 2] = regValue >> 8;      /* 高字节 */
+        modbusTxBuffer[3 + i * 2 + 1] = regValue & 0xFF; /* 低字节 */
+    }
+    
+    /* 添加CRC */
+    modbusAddCrc(modbusTxBuffer, 3 + byteCount);
+    
+    return 3 + byteCount + 2;  /* 头部3字节 + 数据 + CRC2字节 */
+}
+
+/**
+ * @brief 处理功能码05 - 写单个线圈
+ * @param frame 接收帧
+ * @return 响应长度
+ */
+static uint16_t modbusHandleWriteSingleCoil(uint8_t *frame)
+{
+    uint16_t coilAddr = (frame[2] << 8) | frame[3];
+    uint16_t coilValue = (frame[4] << 8) | frame[5];
+    
+    /* 检查地址 */
+    if (coilAddr >= MODBUS_COIL_COUNT) {
+        modbusSendException(MODBUS_FC_WRITE_SINGLE_COIL, MODBUS_EX_ILLEGAL_DATA_ADDRESS);
+        return 0;
+    }
+    
+    /* 检查值（0x0000=OFF, 0xFF00=ON） */
+    if (coilValue != 0x0000 && coilValue != 0xFF00) {
+        modbusSendException(MODBUS_FC_WRITE_SINGLE_COIL, MODBUS_EX_ILLEGAL_DATA_VALUE);
+        return 0;
+    }
+    
+    /* 设置线圈 */
+    modbusSetCoil(coilAddr, coilValue == 0xFF00 ? 1 : 0);
+    
+    /* 响应(回显请求) */
+    memcpy(modbusTxBuffer, frame, 6);
+    modbusAddCrc(modbusTxBuffer, 6);
+    
+    return 8;  /* 6字节数据 + 2字节CRC */
 }
 
 /**
@@ -317,8 +491,20 @@ static void modbusProcessFrame(void)
     
     /* 处理功能码 */
     switch (modbusRxBuffer[1]) {
+        case MODBUS_FC_READ_COILS:
+            txLen = modbusHandleReadCoils(modbusRxBuffer);
+            break;
+            
         case MODBUS_FC_READ_HOLDING_REGS:
             txLen = modbusHandleReadHoldingRegs(modbusRxBuffer);
+            break;
+            
+        case MODBUS_FC_READ_INPUT_REGS:
+            txLen = modbusHandleReadInputRegs(modbusRxBuffer);
+            break;
+            
+        case MODBUS_FC_WRITE_SINGLE_COIL:
+            txLen = modbusHandleWriteSingleCoil(modbusRxBuffer);
             break;
             
         case MODBUS_FC_WRITE_SINGLE_REG:
@@ -336,7 +522,7 @@ static void modbusProcessFrame(void)
     
     /* 发送响应 */
     if (txLen > 0 && modbusRxBuffer[0] != 0) {  /* 广播不响应 */
-        /* 切换RS485到发送模式 */
+    /* 切换RS485到发送模式 */
         HAL_GPIO_WritePin(RS485_DE_PORT, RS485_DE_PIN, GPIO_PIN_SET);
         for(volatile uint32_t i = 0; i < 100; i++);
         
@@ -359,10 +545,25 @@ void modbusRtuInit(void)
     memset(modbusRxBuffer, 0, MODBUS_BUFFER_SIZE);
     memset(modbusTxBuffer, 0, MODBUS_BUFFER_SIZE);
     
-    /* 初始化寄存器(测试数据) */
+    /* 初始化保持寄存器(测试数据) */
     for (i = 0; i < MODBUS_REG_COUNT; i++) {
-        modbusHoldingRegs[i] = i + 1000;  /* 测试值 */
+        modbusHoldingRegs[i] = i + 1000;  /* 1000-1099 */
     }
+    
+    /* 初始化输入寄存器(模拟传感器数据) */
+    for (i = 0; i < MODBUS_INPUT_REG_COUNT; i++) {
+        modbusInputRegs[i] = i + 2000;  /* 2000-2049 */
+    }
+    
+    /* 初始化线圈(前8个设为ON，其余OFF) */
+    memset(modbusCoils, 0, sizeof(modbusCoils));
+    for (i = 0; i < 8 && i < MODBUS_COIL_COUNT; i++) {
+        modbusSetCoil(i, 1);  /* 前8个线圈ON */
+    }
+    
+    /* 初始化离散输入(模拟开关状态) */
+    memset(modbusDiscreteInputs, 0, sizeof(modbusDiscreteInputs));
+    modbusDiscreteInputs[0] = 0xAA;  /* 10101010 - 测试模式 */
     
     /* 复位状态 */
     modbusRxLen = 0;
@@ -573,6 +774,39 @@ void modbusWriteReg(uint16_t addr, uint16_t value)
     if (addr < MODBUS_REG_COUNT) {
         modbusHoldingRegs[addr] = value;
     }
+}
+
+/**
+ * @brief 读取输入寄存器
+ * @param addr 寄存器地址
+ * @return 寄存器值
+ */
+uint16_t modbusReadInputReg(uint16_t addr)
+{
+    if (addr < MODBUS_INPUT_REG_COUNT) {
+        return modbusInputRegs[addr];
+    }
+    return 0;
+}
+
+/**
+ * @brief 读取线圈状态（对外接口）
+ * @param addr 线圈地址
+ * @return 线圈状态
+ */
+uint8_t modbusReadCoil(uint16_t addr)
+{
+    return modbusGetCoil(addr);
+}
+
+/**
+ * @brief 写入线圈状态（对外接口）
+ * @param addr 线圈地址
+ * @param value 线圈值
+ */
+void modbusWriteCoil(uint16_t addr, uint8_t value)
+{
+    modbusSetCoil(addr, value);
 }
 
 /**
