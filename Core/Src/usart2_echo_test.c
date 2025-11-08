@@ -1,13 +1,12 @@
 /**
  * @file usart2_echo_test.c
- * @brief USART2串口回环测试（接收→打印→发送）
- * @details 用于验证串口2 (PA2/PA3) DMA收发功能
+ * @brief USART2 Modbus RTU从站实现
+ * @details 完整的Modbus RTU协议实现，支持功能码03/06/10h
  * @author Lighting Ultra Team
- * @date 2025-11-05
+ * @date 2025-11-08
  */
 
 #include "stm32f1xx_hal.h"
-#include "stm32f1xx_hal_tim.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -16,56 +15,366 @@ extern UART_HandleTypeDef huart2;
 extern DMA_HandleTypeDef hdma_usart2_rx;
 extern DMA_HandleTypeDef hdma_usart2_tx;
 
+/* ==================== Modbus RTU配置 ==================== */
+#define MODBUS_SLAVE_ADDRESS    0x01        /* 从站地址 */
+#define MODBUS_BUFFER_SIZE      256          /* 缓冲区大小 */
+#define MODBUS_REG_COUNT        100          /* 寄存器数量 */
+#define MODBUS_FRAME_TIMEOUT    5            /* 帧超时(ms) */
+#define MODBUS_MIN_FRAME_SIZE   4            /* 最小帧长度 */
 
-/* TIM3用于RS485延迟切换（非阻塞） - 暂时不使用 */
-// TIM_HandleTypeDef htim3;
+/* Modbus功能码定义 */
+#define MODBUS_FC_READ_HOLDING_REGS     0x03   /* 读保持寄存器 */
+#define MODBUS_FC_WRITE_SINGLE_REG      0x06   /* 写单个寄存器 */
+#define MODBUS_FC_WRITE_MULTIPLE_REGS   0x10   /* 写多个寄存器 */
 
-/* 测试缓冲区 */
-#define ECHO_BUFFER_SIZE 256
-static uint8_t echoRxBuffer[ECHO_BUFFER_SIZE];
-static uint8_t echoTxBuffer[ECHO_BUFFER_SIZE];
-static volatile uint16_t echoRxCount = 0;
-static volatile uint8_t echoDataReady = 0;
-static volatile uint8_t echoTxComplete = 0;
-
-/* 诊断计数器 */
-static volatile uint32_t diagIdleCount = 0;
-static volatile uint32_t diagProcessCount = 0;
-static volatile uint32_t diagTxCpltCount = 0;
-static volatile uint32_t diagTim3Count = 0;
-static volatile uint32_t diagDmaTxCount = 0;
-
-/* LED诊断（PB1） */
-#define DIAG_LED_PORT GPIOB
-#define DIAG_LED_PIN  GPIO_PIN_1
+/* Modbus异常码定义 */
+#define MODBUS_EX_ILLEGAL_FUNCTION      0x01
+#define MODBUS_EX_ILLEGAL_DATA_ADDRESS  0x02
+#define MODBUS_EX_ILLEGAL_DATA_VALUE    0x03
+#define MODBUS_EX_SLAVE_DEVICE_FAILURE  0x04
 
 /* RS485控制引脚（PA4） */
-#define ECHO_RS485_PORT GPIOA
-#define ECHO_RS485_PIN  GPIO_PIN_4
+#define RS485_DE_PORT   GPIOA
+#define RS485_DE_PIN    GPIO_PIN_4
+
+/* LED诊断（PB1） */
+#define LED_PORT        GPIOB
+#define LED_PIN         GPIO_PIN_1
+
+/* ==================== Modbus数据结构 ==================== */
+/* Modbus状态机 */
+typedef enum {
+    MODBUS_STATE_IDLE,          /* 空闲等待 */
+    MODBUS_STATE_RECEIVING,     /* 接收中 */
+    MODBUS_STATE_PROCESSING,    /* 处理中 */
+    MODBUS_STATE_SENDING        /* 发送中 */
+} ModbusState;
+
+/* Modbus统计信息 */
+typedef struct {
+    uint32_t rxFrameCount;      /* 接收帧计数 */
+    uint32_t txFrameCount;      /* 发送帧计数 */
+    uint32_t errorCount;        /* 错误计数 */
+    uint32_t crcErrorCount;     /* CRC错误计数 */
+} ModbusStats;
+
+/* ==================== 全局变量 ==================== */
+static uint8_t modbusRxBuffer[MODBUS_BUFFER_SIZE];
+static uint8_t modbusTxBuffer[MODBUS_BUFFER_SIZE];
+static uint16_t modbusHoldingRegs[MODBUS_REG_COUNT];  /* 保持寄存器 */
+
+static volatile uint16_t modbusRxLen = 0;
+static volatile uint8_t modbusFrameReady = 0;
+static volatile ModbusState modbusState = MODBUS_STATE_IDLE;
+static volatile uint32_t modbusLastRxTime = 0;
+
+static ModbusStats modbusStats = {0};
+
+/* CRC16查找表 */
+static const uint16_t crc16Table[256] = {
+    0x0000, 0xC0C1, 0xC181, 0x0140, 0xC301, 0x03C0, 0x0280, 0xC241,
+    0xC601, 0x06C0, 0x0780, 0xC741, 0x0500, 0xC5C1, 0xC481, 0x0440,
+    0xCC01, 0x0CC0, 0x0D80, 0xCD41, 0x0F00, 0xCFC1, 0xCE81, 0x0E40,
+    0x0A00, 0xCAC1, 0xCB81, 0x0B40, 0xC901, 0x09C0, 0x0880, 0xC841,
+    0xD801, 0x18C0, 0x1980, 0xD941, 0x1B00, 0xDBC1, 0xDA81, 0x1A40,
+    0x1E00, 0xDEC1, 0xDF81, 0x1F40, 0xDD01, 0x1DC0, 0x1C80, 0xDC41,
+    0x1400, 0xD4C1, 0xD581, 0x1540, 0xD701, 0x17C0, 0x1680, 0xD641,
+    0xD201, 0x12C0, 0x1380, 0xD341, 0x1100, 0xD1C1, 0xD081, 0x1040,
+    0xF001, 0x30C0, 0x3180, 0xF141, 0x3300, 0xF3C1, 0xF281, 0x3240,
+    0x3600, 0xF6C1, 0xF781, 0x3740, 0xF501, 0x35C0, 0x3480, 0xF441,
+    0x3C00, 0xFCC1, 0xFD81, 0x3D40, 0xFF01, 0x3FC0, 0x3E80, 0xFE41,
+    0xFA01, 0x3AC0, 0x3B80, 0xFB41, 0x3900, 0xF9C1, 0xF881, 0x3840,
+    0x2800, 0xE8C1, 0xE981, 0x2940, 0xEB01, 0x2BC0, 0x2A80, 0xEA41,
+    0xEE01, 0x2EC0, 0x2F80, 0xEF41, 0x2D00, 0xEDC1, 0xEC81, 0x2C40,
+    0xE401, 0x24C0, 0x2580, 0xE541, 0x2700, 0xE7C1, 0xE681, 0x2640,
+    0x2200, 0xE2C1, 0xE381, 0x2340, 0xE101, 0x21C0, 0x2080, 0xE041,
+    0xA001, 0x60C0, 0x6180, 0xA141, 0x6300, 0xA3C1, 0xA281, 0x6240,
+    0x6600, 0xA6C1, 0xA781, 0x6740, 0xA501, 0x65C0, 0x6480, 0xA441,
+    0x6C00, 0xACC1, 0xAD81, 0x6D40, 0xAF01, 0x6FC0, 0x6E80, 0xAE41,
+    0xAA01, 0x6AC0, 0x6B80, 0xAB41, 0x6900, 0xA9C1, 0xA881, 0x6840,
+    0x7800, 0xB8C1, 0xB981, 0x7940, 0xBB01, 0x7BC0, 0x7A80, 0xBA41,
+    0xBE01, 0x7EC0, 0x7F80, 0xBF41, 0x7D00, 0xBDC1, 0xBC81, 0x7C40,
+    0xB401, 0x74C0, 0x7580, 0xB541, 0x7700, 0xB7C1, 0xB681, 0x7640,
+    0x7200, 0xB2C1, 0xB381, 0x7340, 0xB101, 0x71C0, 0x7080, 0xB041,
+    0x5000, 0x90C1, 0x9181, 0x5140, 0x9301, 0x53C0, 0x5280, 0x9241,
+    0x9601, 0x56C0, 0x5780, 0x9741, 0x5500, 0x95C1, 0x9481, 0x5440,
+    0x9C01, 0x5CC0, 0x5D80, 0x9D41, 0x5F00, 0x9FC1, 0x9E81, 0x5E40,
+    0x5A00, 0x9AC1, 0x9B81, 0x5B40, 0x9901, 0x59C0, 0x5880, 0x9841,
+    0x8801, 0x48C0, 0x4980, 0x8941, 0x4B00, 0x8BC1, 0x8A81, 0x4A40,
+    0x4E00, 0x8EC1, 0x8F81, 0x4F40, 0x8D01, 0x4DC0, 0x4C80, 0x8C41,
+    0x4400, 0x84C1, 0x8581, 0x4540, 0x8701, 0x47C0, 0x4680, 0x8641,
+    0x8201, 0x42C0, 0x4380, 0x8341, 0x4100, 0x81C1, 0x8081, 0x4040
+};
+
+/* ==================== CRC计算函数 ==================== */
+/**
+ * @brief 计算Modbus CRC16
+ * @param data 数据指针
+ * @param len 数据长度
+ * @return CRC16值
+ */
+static uint16_t modbusCrc16(uint8_t *data, uint16_t len)
+{
+    uint16_t crc = 0xFFFF;
+    uint16_t i;
+    
+    for (i = 0; i < len; i++) {
+        crc = (crc >> 8) ^ crc16Table[(crc ^ data[i]) & 0xFF];
+    }
+    
+    return crc;
+}
 
 /**
- * @brief 初始化串口2回环测试
+ * @brief 检查CRC是否正确
+ * @param frame 帧数据
+ * @param len 帧长度(包含CRC)
+ * @return 1=正确, 0=错误
  */
-void usart2EchoTestInit(void)
+static uint8_t modbusCheckCrc(uint8_t *frame, uint16_t len)
 {
-    /* 清空缓冲区 */
-    memset(echoRxBuffer, 0, ECHO_BUFFER_SIZE);
-    memset(echoTxBuffer, 0, ECHO_BUFFER_SIZE);
-    echoRxCount = 0;
-    echoDataReady = 0;
-    echoTxComplete = 0;
+    uint16_t crcCalc;
+    uint16_t crcRecv;
     
-    /* 诊断计数器清零 */
-    diagIdleCount = 0;
-    diagProcessCount = 0;
-    diagTxCpltCount = 0;
-    diagTim3Count = 0;
-    diagDmaTxCount = 0;
+    if (len < 4) return 0;
+    
+    /* 计算CRC (不包括CRC字节) */
+    crcCalc = modbusCrc16(frame, len - 2);
+    
+    /* 提取接收的CRC (小端) */
+    crcRecv = frame[len - 2] | (frame[len - 1] << 8);
+    
+    return (crcCalc == crcRecv) ? 1 : 0;
+}
+
+/**
+ * @brief 添加CRC到帧尾
+ * @param frame 帧数据
+ * @param len 数据长度(不含CRC)
+ */
+static void modbusAddCrc(uint8_t *frame, uint16_t len)
+{
+    uint16_t crc = modbusCrc16(frame, len);
+    frame[len] = crc & 0xFF;        /* CRC低字节 */
+    frame[len + 1] = crc >> 8;       /* CRC高字节 */
+}
+
+/* ==================== Modbus异常响应 ==================== */
+/**
+ * @brief 发送异常响应
+ * @param funcCode 功能码
+ * @param exCode 异常码
+ */
+static void modbusSendException(uint8_t funcCode, uint8_t exCode)
+{
+    modbusTxBuffer[0] = MODBUS_SLAVE_ADDRESS;
+    modbusTxBuffer[1] = funcCode | 0x80;  /* 功能码最高位置1 */
+    modbusTxBuffer[2] = exCode;
+    modbusAddCrc(modbusTxBuffer, 3);
+    
+    /* 切换RS485到发送模式 */
+    HAL_GPIO_WritePin(RS485_DE_PORT, RS485_DE_PIN, GPIO_PIN_SET);
+    for(volatile uint32_t i = 0; i < 100; i++);
+    
+    /* DMA发送 */
+    HAL_UART_Transmit_DMA(&huart2, modbusTxBuffer, 5);
+    modbusStats.txFrameCount++;
+    modbusState = MODBUS_STATE_SENDING;
+}
+
+/* ==================== Modbus功能码处理 ==================== */
+/**
+ * @brief 处理功能码03 - 读保持寄存器
+ * @param frame 接收帧
+ * @return 响应长度
+ */
+static uint16_t modbusHandleReadHoldingRegs(uint8_t *frame)
+{
+    uint16_t startAddr = (frame[2] << 8) | frame[3];
+    uint16_t regCount = (frame[4] << 8) | frame[5];
+    uint16_t i;
+    uint8_t byteCount;
+    
+    /* 检查地址范围 */
+    if (startAddr >= MODBUS_REG_COUNT || 
+        (startAddr + regCount) > MODBUS_REG_COUNT ||
+        regCount == 0 || regCount > 125) {
+        modbusSendException(MODBUS_FC_READ_HOLDING_REGS, MODBUS_EX_ILLEGAL_DATA_ADDRESS);
+        return 0;
+    }
+    
+    /* 构建响应 */
+    modbusTxBuffer[0] = MODBUS_SLAVE_ADDRESS;
+    modbusTxBuffer[1] = MODBUS_FC_READ_HOLDING_REGS;
+    byteCount = regCount * 2;
+    modbusTxBuffer[2] = byteCount;
+    
+    /* 复制寄存器数据 */
+    for (i = 0; i < regCount; i++) {
+        uint16_t regValue = modbusHoldingRegs[startAddr + i];
+        modbusTxBuffer[3 + i * 2] = regValue >> 8;      /* 高字节 */
+        modbusTxBuffer[3 + i * 2 + 1] = regValue & 0xFF; /* 低字节 */
+    }
+    
+    /* 添加CRC */
+    modbusAddCrc(modbusTxBuffer, 3 + byteCount);
+    
+    return 3 + byteCount + 2;  /* 头部3字节 + 数据 + CRC2字节 */
+}
+
+/**
+ * @brief 处理功能码06 - 写单个寄存器
+ * @param frame 接收帧
+ * @return 响应长度
+ */
+static uint16_t modbusHandleWriteSingleReg(uint8_t *frame)
+{
+    uint16_t regAddr = (frame[2] << 8) | frame[3];
+    uint16_t regValue = (frame[4] << 8) | frame[5];
+    
+    /* 检查地址 */
+    if (regAddr >= MODBUS_REG_COUNT) {
+        modbusSendException(MODBUS_FC_WRITE_SINGLE_REG, MODBUS_EX_ILLEGAL_DATA_ADDRESS);
+        return 0;
+    }
+    
+    /* 写入寄存器 */
+    modbusHoldingRegs[regAddr] = regValue;
+    
+    /* 响应(回显请求) */
+    memcpy(modbusTxBuffer, frame, 6);
+    modbusAddCrc(modbusTxBuffer, 6);
+    
+    return 8;  /* 6字节数据 + 2字节CRC */
+}
+
+/**
+ * @brief 处理功能码10h - 写多个寄存器
+ * @param frame 接收帧
+ * @return 响应长度
+ */
+static uint16_t modbusHandleWriteMultipleRegs(uint8_t *frame)
+{
+    uint16_t startAddr = (frame[2] << 8) | frame[3];
+    uint16_t regCount = (frame[4] << 8) | frame[5];
+    uint8_t byteCount = frame[6];
+    uint16_t i;
+    
+    /* 检查参数 */
+    if (startAddr >= MODBUS_REG_COUNT || 
+        (startAddr + regCount) > MODBUS_REG_COUNT ||
+        regCount == 0 || regCount > 123 ||
+        byteCount != (regCount * 2)) {
+        modbusSendException(MODBUS_FC_WRITE_MULTIPLE_REGS, MODBUS_EX_ILLEGAL_DATA_ADDRESS);
+        return 0;
+    }
+    
+    /* 写入寄存器 */
+    for (i = 0; i < regCount; i++) {
+        uint16_t regValue = (frame[7 + i * 2] << 8) | frame[7 + i * 2 + 1];
+        modbusHoldingRegs[startAddr + i] = regValue;
+    }
+    
+    /* 构建响应 */
+    modbusTxBuffer[0] = MODBUS_SLAVE_ADDRESS;
+    modbusTxBuffer[1] = MODBUS_FC_WRITE_MULTIPLE_REGS;
+    modbusTxBuffer[2] = frame[2];  /* 起始地址高字节 */
+    modbusTxBuffer[3] = frame[3];  /* 起始地址低字节 */
+    modbusTxBuffer[4] = frame[4];  /* 寄存器数量高字节 */
+    modbusTxBuffer[5] = frame[5];  /* 寄存器数量低字节 */
+    modbusAddCrc(modbusTxBuffer, 6);
+    
+    return 8;  /* 6字节数据 + 2字节CRC */
+}
+
+/* ==================== Modbus帧处理 ==================== */
+/**
+ * @brief 处理接收到的Modbus帧
+ */
+static void modbusProcessFrame(void)
+{
+    uint16_t txLen = 0;
+    
+    /* 检查最小帧长度 */
+    if (modbusRxLen < MODBUS_MIN_FRAME_SIZE) {
+        modbusStats.errorCount++;
+        return;
+    }
+    
+    /* 检查CRC */
+    if (!modbusCheckCrc(modbusRxBuffer, modbusRxLen)) {
+        modbusStats.crcErrorCount++;
+        return;
+    }
+    
+    /* 检查从站地址 */
+    if (modbusRxBuffer[0] != MODBUS_SLAVE_ADDRESS && modbusRxBuffer[0] != 0) {
+        return;  /* 不是本站地址也不是广播 */
+    }
+    
+    /* 统计 */
+    modbusStats.rxFrameCount++;
+    
+    /* 处理功能码 */
+    switch (modbusRxBuffer[1]) {
+        case MODBUS_FC_READ_HOLDING_REGS:
+            txLen = modbusHandleReadHoldingRegs(modbusRxBuffer);
+            break;
+            
+        case MODBUS_FC_WRITE_SINGLE_REG:
+            txLen = modbusHandleWriteSingleReg(modbusRxBuffer);
+            break;
+            
+        case MODBUS_FC_WRITE_MULTIPLE_REGS:
+            txLen = modbusHandleWriteMultipleRegs(modbusRxBuffer);
+            break;
+            
+        default:
+            modbusSendException(modbusRxBuffer[1], MODBUS_EX_ILLEGAL_FUNCTION);
+            return;
+    }
+    
+    /* 发送响应 */
+    if (txLen > 0 && modbusRxBuffer[0] != 0) {  /* 广播不响应 */
+        /* 切换RS485到发送模式 */
+        HAL_GPIO_WritePin(RS485_DE_PORT, RS485_DE_PIN, GPIO_PIN_SET);
+        for(volatile uint32_t i = 0; i < 100; i++);
+        
+        /* DMA发送 */
+        HAL_UART_Transmit_DMA(&huart2, modbusTxBuffer, txLen);
+        modbusStats.txFrameCount++;
+        modbusState = MODBUS_STATE_SENDING;
+    }
+}
+
+/* ==================== 初始化和主循环 ==================== */
+/**
+ * @brief 初始化Modbus RTU
+ */
+void modbusRtuInit(void)
+{
+    uint16_t i;
+    
+    /* 清空缓冲区 */
+    memset(modbusRxBuffer, 0, MODBUS_BUFFER_SIZE);
+    memset(modbusTxBuffer, 0, MODBUS_BUFFER_SIZE);
+    
+    /* 初始化寄存器(测试数据) */
+    for (i = 0; i < MODBUS_REG_COUNT; i++) {
+        modbusHoldingRegs[i] = i + 1000;  /* 测试值 */
+    }
+    
+    /* 复位状态 */
+    modbusRxLen = 0;
+    modbusFrameReady = 0;
+    modbusState = MODBUS_STATE_IDLE;
+    modbusLastRxTime = 0;
+    
+    /* 清空统计 */
+    memset(&modbusStats, 0, sizeof(modbusStats));
     
     /* RS485设置为接收模式 */
-    HAL_GPIO_WritePin(ECHO_RS485_PORT, ECHO_RS485_PIN, GPIO_PIN_RESET);
-    
-    /* 短暂延时确保RS485稳定 */
+    HAL_GPIO_WritePin(RS485_DE_PORT, RS485_DE_PIN, GPIO_PIN_RESET);
     HAL_Delay(10);
     
     /* 清除IDLE标志并启用IDLE中断 */
@@ -73,27 +382,23 @@ void usart2EchoTestInit(void)
     __HAL_UART_ENABLE_IT(&huart2, UART_IT_IDLE);
     
     /* 启动DMA接收 */
-    HAL_StatusTypeDef status = HAL_UART_Receive_DMA(&huart2, echoRxBuffer, ECHO_BUFFER_SIZE);
+    HAL_UART_Receive_DMA(&huart2, modbusRxBuffer, MODBUS_BUFFER_SIZE);
     
-    /* 诊断：如果DMA启动失败，LED快闪10次 */
-    if (status != HAL_OK) {
-        for (int i = 0; i < 10; i++) {
-            HAL_GPIO_TogglePin(DIAG_LED_PORT, DIAG_LED_PIN);
-            HAL_Delay(100);
-        }
+    /* LED闪3次表示初始化完成 */
+    for (i = 0; i < 3; i++) {
+        HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_RESET);
+        HAL_Delay(200);
+        HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_SET);
+        HAL_Delay(200);
     }
 }
 
 /**
- * @brief IDLE中断回调（在stm32f1xx_it.c中调用）
+ * @brief IDLE中断处理（Modbus帧接收）
+ * @note 在stm32f1xx_it.c的USART2_IRQHandler中调用
  */
-void usart2EchoHandleIdle(void)
+void modbusHandleIdle(void)
 {
-    diagIdleCount++;
-    
-    /* LED快闪表示IDLE触发 */
-    HAL_GPIO_WritePin(DIAG_LED_PORT, DIAG_LED_PIN, GPIO_PIN_RESET);
-    
     /* 停止DMA */
     HAL_UART_DMAStop(&huart2);
     
@@ -102,196 +407,208 @@ void usart2EchoHandleIdle(void)
     volatile uint32_t dr = huart2.Instance->DR; (void)dr;
     
     /* 计算接收字节数 */
-    echoRxCount = ECHO_BUFFER_SIZE - __HAL_DMA_GET_COUNTER(&hdma_usart2_rx);
+    modbusRxLen = MODBUS_BUFFER_SIZE - __HAL_DMA_GET_COUNTER(&hdma_usart2_rx);
     
-    if (echoRxCount > 0) {
-        echoDataReady = 1;
-        /* 不在这里重启DMA，等待主循环处理完数据后重启 */
+    if (modbusRxLen > 0) {
+        modbusFrameReady = 1;
+        modbusLastRxTime = HAL_GetTick();
+        modbusState = MODBUS_STATE_PROCESSING;
+        /* LED快闪表示接收到数据（不能在中断中使用HAL_Delay） */
+        HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_RESET);
     } else {
-        /* 如果没有接收到数据，立即重启DMA继续接收 */
-        HAL_UART_Receive_DMA(&huart2, echoRxBuffer, ECHO_BUFFER_SIZE);
+        /* 没有数据，重启DMA接收 */
+        HAL_UART_Receive_DMA(&huart2, modbusRxBuffer, MODBUS_BUFFER_SIZE);
     }
-    
-    HAL_GPIO_WritePin(DIAG_LED_PORT, DIAG_LED_PIN, GPIO_PIN_SET);
 }
 
 /**
- * @brief 处理回环测试（纯数据回环，无调试信息）
- * @note DMA异步发送，TIM3硬件延迟切换RS485
+ * @brief DMA发送完成回调
+ * @note 在HAL_UART_TxCpltCallback中被调用
  */
-void usart2EchoProcess(void)
-{
-    diagProcessCount++;
-    
-    /* LED慢闪表示主循环运行 */
-    static uint32_t lastBlink = 0;
-    if (HAL_GetTick() - lastBlink > 1000) {
-        lastBlink = HAL_GetTick();
-        HAL_GPIO_TogglePin(DIAG_LED_PORT, DIAG_LED_PIN);
-    }
-    
-    if (!echoDataReady) {
-        return;
-    }
-    
-    /* 保存接收长度 */
-    uint16_t rxLen = echoRxCount;
-    
-    /* 立即复制数据到发送缓冲区（避免被覆盖） */
-    memcpy(echoTxBuffer, echoRxBuffer, rxLen);
-
-
-    
-    /* 清除接收标志和缓冲区 */
-    echoDataReady = 0;
-    echoRxCount = 0;
-    memset(echoRxBuffer, 0, ECHO_BUFFER_SIZE);
-    
-    /* 切换RS485到发送模式 */
-    HAL_GPIO_WritePin(ECHO_RS485_PORT, ECHO_RS485_PIN, GPIO_PIN_SET);
-    
-    /* 小延时确保RS485切换稳定 */
-    for(volatile uint32_t i = 0; i < 100; i++); // 约10us延时
-    
-    /* DMA异步发送（不阻塞CPU） */
-    echoTxComplete = 0;
-    diagDmaTxCount++;
-    HAL_UART_Transmit_DMA(&huart2, echoTxBuffer, rxLen);
-    
-    /* 注意：DMA接收将在发送完成回调中重启 */
-    /* 发送完成后会自动调用 HAL_UART_TxCpltCallback */
-}
-
-/**
- * @brief 处理回环测试（带调试信息版本）
- */
-void usart2EchoProcessDebug(void)
-{
-    if (!echoDataReady) {
-        return;
-    }
-    
-    /* 保存接收长度 */
-    uint16_t rxLen = echoRxCount;
-    
-    /* 立即复制数据到发送缓冲区（避免被覆盖） */
-    memcpy(echoTxBuffer, echoRxBuffer, rxLen);
-    
-    /* 清除标志（先清除，避免重复触发） */
-    echoDataReady = 0;
-    echoRxCount = 0;
-    
-    /* 重启DMA接收（立即启动，避免丢失数据） */
-    HAL_UART_Receive_DMA(&huart2, echoRxBuffer, ECHO_BUFFER_SIZE);
-    
-    /* 切换RS485到发送模式 */
-    HAL_GPIO_WritePin(ECHO_RS485_PORT, ECHO_RS485_PIN, GPIO_PIN_SET);
-    HAL_Delay(2);
-    
-    /* 打印接收数据（HEX格式） */
-    char debugMsg[128];
-    snprintf(debugMsg, sizeof(debugMsg), "\r\n[RX %d] ", rxLen);
-    HAL_UART_Transmit(&huart2, (uint8_t*)debugMsg, strlen(debugMsg), 100);
-    
-    for (uint16_t i = 0; i < rxLen && i < 32; i++) {
-        snprintf(debugMsg, sizeof(debugMsg), "%02X ", echoTxBuffer[i]);
-        HAL_UART_Transmit(&huart2, (uint8_t*)debugMsg, strlen(debugMsg), 100);
-    }
-    HAL_UART_Transmit(&huart2, (uint8_t*)"\r\n", 2, 100);
-    
-    /* 发送回环数据 */
-    HAL_UART_Transmit(&huart2, (uint8_t*)"[ECHO] ", 7, 100);
-    HAL_UART_Transmit(&huart2, echoTxBuffer, rxLen, 1000);
-    
-    /* 等待最后字节发出 */
-    HAL_Delay(5);
-    
-    /* 切换RS485回接收模式 */
-    HAL_GPIO_WritePin(ECHO_RS485_PORT, ECHO_RS485_PIN, GPIO_PIN_RESET);
-    
-    HAL_UART_Transmit(&huart2, (uint8_t*)"\r\n[OK]\r\n", 7, 100);
-}
-
-/**
- * @brief DMA发送完成回调（在中断中自动调用）
- * @note 此函数在stm32f1xx_it.c的HAL_UART_TxCpltCallback中被调用
- * @note 使用阻塞式延迟（简单可靠）
- */
-void usart2EchoTxCallback(UART_HandleTypeDef *huart)
+void modbusTxCallback(UART_HandleTypeDef *huart)
 {
     if (huart == &huart2) {
-        diagTxCpltCount++;
-        
-        /* LED长亮表示TxCallback触发 */
-        HAL_GPIO_WritePin(DIAG_LED_PORT, DIAG_LED_PIN, GPIO_PIN_RESET);
-        
-        /* 等待发送移位寄存器完全空 (TC=1)，设置小超时防卡死 */
+        /* 等待发送移位寄存器完全空 (TC=1) */
         uint32_t startTick = HAL_GetTick();
         while (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_TC) == RESET) {
-            if ((HAL_GetTick() - startTick) > 2U) { /* ~2ms 超时 */
+            if ((HAL_GetTick() - startTick) > 2U) { /* 2ms超时 */
                 break;
             }
         }
         
-        /* 切换RS485回接收模式（DE=LOW） */
-        HAL_GPIO_WritePin(ECHO_RS485_PORT, ECHO_RS485_PIN, GPIO_PIN_RESET);
+        /* 切换RS485回接收模式 */
+        HAL_GPIO_WritePin(RS485_DE_PORT, RS485_DE_PIN, GPIO_PIN_RESET);
         
-        /* 重要：立即重启DMA接收，准备接收下一帧数据 */
-        HAL_UART_Receive_DMA(&huart2, echoRxBuffer, ECHO_BUFFER_SIZE);
+        /* 清空接收缓冲区 */
+        memset(modbusRxBuffer, 0, MODBUS_BUFFER_SIZE);
+        modbusRxLen = 0;
+        modbusFrameReady = 0;
         
-        /* 标记发送完成 */
-        echoTxComplete = 1;
+        /* 重启DMA接收 */
+        HAL_UART_Receive_DMA(&huart2, modbusRxBuffer, MODBUS_BUFFER_SIZE);
         
-        /* LED熄灭表示切换完成 */
-        HAL_GPIO_WritePin(DIAG_LED_PORT, DIAG_LED_PIN, GPIO_PIN_SET);
+        /* 恢复空闲状态 */
+        modbusState = MODBUS_STATE_IDLE;
+        
+        /* LED恢复 */
+        HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_SET);
     }
 }
 
 /**
- * @brief 获取诊断计数器
+ * @brief Modbus主处理函数
+ * @note 在主循环中调用
  */
-void usart2EchoGetDiagnostics(uint32_t *idle, uint32_t *process, uint32_t *txCplt, uint32_t *tim3, uint32_t *dmaTx)
+void modbusRtuProcess(void)
 {
-    if (idle) *idle = diagIdleCount;
-    if (process) *process = diagProcessCount;
-    if (txCplt) *txCplt = diagTxCpltCount;
-    if (tim3) *tim3 = diagTim3Count;
-    if (dmaTx) *dmaTx = diagDmaTxCount;
+    static uint32_t lastLedBlink = 0;
+    static uint32_t debugCounter = 0;
+    
+    /* LED心跳指示(500ms快速闪烁表示运行) */
+    if (HAL_GetTick() - lastLedBlink > 500) {
+        lastLedBlink = HAL_GetTick();
+        HAL_GPIO_TogglePin(LED_PORT, LED_PIN);
+        debugCounter++;
+    }
+    
+    /* 处理接收到的帧 */
+    if (modbusFrameReady) {
+        modbusFrameReady = 0;
+        
+        /* 调试：简单回环测试（先测试基本通信） */
+        #if 0  /* 禁用简单回环测试，启用Modbus处理 */
+        {
+            /* LED快闪表示收到数据 */
+            for(int i = 0; i < 2; i++) {
+                HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_RESET);
+                HAL_Delay(50);
+                HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_SET);
+                HAL_Delay(50);
+            }
+            
+            /* 简单回环：直接返回接收到的数据 */
+            memcpy(modbusTxBuffer, modbusRxBuffer, modbusRxLen);
+    
+    /* 切换RS485到发送模式 */
+            HAL_GPIO_WritePin(RS485_DE_PORT, RS485_DE_PIN, GPIO_PIN_SET);
+            for(volatile uint32_t i = 0; i < 100; i++);
+            
+            /* DMA发送 */
+            HAL_UART_Transmit_DMA(&huart2, modbusTxBuffer, modbusRxLen);
+            modbusState = MODBUS_STATE_SENDING;
+        }
+        #else
+        /* 正常Modbus处理 */
+        
+        /* LED快速指示收到数据（不延时） */
+        HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_RESET);
+        
+        modbusProcessFrame();
+        
+        /* 恢复LED */
+        HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_SET);
+        #endif
+        
+        /* 如果没有发送响应，重启接收 */
+        if (modbusState != MODBUS_STATE_SENDING) {
+            memset(modbusRxBuffer, 0, MODBUS_BUFFER_SIZE);
+            modbusRxLen = 0;
+            HAL_UART_Receive_DMA(&huart2, modbusRxBuffer, MODBUS_BUFFER_SIZE);
+            modbusState = MODBUS_STATE_IDLE;
+            HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_SET);
+        }
+    }
+    
+    /* 超时检测 */
+    if (modbusState == MODBUS_STATE_RECEIVING) {
+        if ((HAL_GetTick() - modbusLastRxTime) > MODBUS_FRAME_TIMEOUT) {
+            /* 接收超时，重启 */
+            HAL_UART_DMAStop(&huart2);
+            memset(modbusRxBuffer, 0, MODBUS_BUFFER_SIZE);
+            modbusRxLen = 0;
+            modbusFrameReady = 0;
+            HAL_UART_Receive_DMA(&huart2, modbusRxBuffer, MODBUS_BUFFER_SIZE);
+            modbusState = MODBUS_STATE_IDLE;
+        }
+    }
 }
 
 /**
- * @brief 运行完整回环测试
+ * @brief 运行Modbus RTU从站
+ * @note 完整的主循环
  */
-void usart2EchoTestRun(void)
+void modbusRtuRun(void)
 {
-    usart2EchoTestInit();
+    /* 初始化 */
+    modbusRtuInit();
     
-    /* LED闪3次表示启动 */
-    for (uint8_t i = 0; i < 3; i++) {
-        HAL_GPIO_WritePin(DIAG_LED_PORT, DIAG_LED_PIN, GPIO_PIN_RESET);
-        HAL_Delay(200);
-        HAL_GPIO_WritePin(DIAG_LED_PORT, DIAG_LED_PIN, GPIO_PIN_SET);
-        HAL_Delay(200);
-    }
-    
-    /* 注释掉测试发送，避免干扰正常的回环测试 */
-    /* 
-    HAL_Delay(500);
-    const char *test = "Test OK\r\n";
-    HAL_GPIO_WritePin(ECHO_RS485_PORT, ECHO_RS485_PIN, GPIO_PIN_SET);
-    HAL_Delay(1);
-    HAL_UART_Transmit(&huart2, (uint8_t*)test, strlen(test), 100);
-    HAL_Delay(1);
-    HAL_GPIO_WritePin(ECHO_RS485_PORT, ECHO_RS485_PIN, GPIO_PIN_RESET);
-    */
-    
-    /* 确保开始时RS485处于接收模式 */
-    HAL_GPIO_WritePin(ECHO_RS485_PORT, ECHO_RS485_PIN, GPIO_PIN_RESET);
-    
+    /* 主循环 */
     while (1) {
-        usart2EchoProcess();        // 使用纯净版本（推荐）
-        // usart2EchoProcessDebug();  // 使用调试版本（可选）
+        modbusRtuProcess();
         HAL_Delay(1);
     }
+}
+
+/* ==================== 寄存器操作接口 ==================== */
+/**
+ * @brief 读取保持寄存器
+ * @param addr 寄存器地址
+ * @return 寄存器值
+ */
+uint16_t modbusReadReg(uint16_t addr)
+{
+    if (addr < MODBUS_REG_COUNT) {
+        return modbusHoldingRegs[addr];
+    }
+    return 0;
+}
+
+/**
+ * @brief 写入保持寄存器
+ * @param addr 寄存器地址
+ * @param value 寄存器值
+ */
+void modbusWriteReg(uint16_t addr, uint16_t value)
+{
+    if (addr < MODBUS_REG_COUNT) {
+        modbusHoldingRegs[addr] = value;
+    }
+}
+
+/**
+ * @brief 获取Modbus统计信息
+ * @return 统计信息指针
+ */
+ModbusStats* modbusGetStats(void)
+{
+    return &modbusStats;
+}
+
+/* ==================== 兼容性接口(保留原有函数名) ==================== */
+/* 以下函数保留原有名称，实际调用Modbus功能 */
+
+void usart2EchoTestInit(void)
+{
+    modbusRtuInit();
+}
+
+void usart2EchoHandleIdle(void)
+{
+    modbusHandleIdle();
+}
+
+void usart2EchoProcess(void)
+{
+    modbusRtuProcess();
+}
+
+void usart2EchoTxCallback(UART_HandleTypeDef *huart)
+{
+    modbusTxCallback(huart);
+}
+
+void usart2EchoTestRun(void)
+{
+    modbusRtuRun();
 }
 
