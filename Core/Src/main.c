@@ -19,25 +19,27 @@
 /* 运行模式选择集中到 app_config.h */
 
 /* ---------------- 外设句柄 ---------------- */
-UART_HandleTypeDef huart1;  /* 串口2: PA9/PA10 */
+UART_HandleTypeDef huart1;  /* USART1: PA9/PA10 */
 DMA_HandleTypeDef  hdma_usart1_rx;
 DMA_HandleTypeDef  hdma_usart1_tx;
 
-UART_HandleTypeDef huart2;  /* 串口1: PA2/PA3 */
+UART_HandleTypeDef huart2;  /* USART2: PA2/PA3 */
 DMA_HandleTypeDef  hdma_usart2_rx;
 DMA_HandleTypeDef  hdma_usart2_tx;
 // TIM_HandleTypeDef  htim2; // 暂时注释
 
 /* ---------------- 全局 Modbus 实例 ---------------- */
-ModbusRTU_Slave g_mb;   /* 绑定到 huart1 (串口2) */
-ModbusRTU_Slave g_mb2;  /* 绑定到 huart2 (串口1) */
+ModbusRTU_Slave g_mb;   /* 绑定到 huart1 (USART1) */
+ModbusRTU_Slave g_mb2;  /* 绑定到 huart2 (USART2) */
+
+
 
 /* ---------------- 原型 ---------------- */
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
-static void MX_USART1_UART_Init(void);  /* 串口2: PA9/PA10 */
-static void MX_USART2_UART_Init(void);  /* 串口1: PA2/PA3 */
+static void MX_USART1_UART_Init(void);  /* USART1: PA9/PA10 */
+static void MX_USART2_UART_Init(void);  /* USART2: PA2/PA3 */
 // static void MX_TIM2_Init(void); // 暂时注释
 
 /* RS485 direction control is now defined in modbus_rtu_slave.h */
@@ -64,16 +66,15 @@ int main(void)
     // MX_TIM2_Init(); // 暂时注释，避免链接错误
 
     /* 使能 USART IDLE 中断 */
+    /* 为了调试方便，两个串口的IDLE中断都启用 */
     __HAL_UART_ENABLE_IT(&huart1, UART_IT_IDLE);
-    #if (RUN_MODE_ECHO_TEST != 2) && (RUN_MODE_ECHO_TEST != 4)
-        __HAL_UART_ENABLE_IT(&huart2, UART_IT_IDLE);
-    #endif
+    __HAL_UART_ENABLE_IT(&huart2, UART_IT_IDLE);
 
     #if RUN_MODE_ECHO_TEST == 0
         /* 仅在Modbus模式下初始化 */
         /* Modbus 初始化 */
-        ModbusRTU_Init(&g_mb,  &huart1, 0x01);  /* 串口2: 从站地址 0x01 */
-        ModbusRTU_Init(&g_mb2, &huart2, 0x02);  /* 串口1: 从站地址 0x02 */
+        ModbusRTU_Init(&g_mb,  &huart1, 0x01);  /* USART1: 从站地址 0x01 */
+        ModbusRTU_Init(&g_mb2, &huart2, 0x02);  /* USART2: 从站地址 0x02 */
 
         /* 启动 1ms 定时中断（兜底用） */
         // HAL_TIM_Base_Start_IT(&htim2); // 暂时注释，避免链接错误
@@ -99,16 +100,16 @@ int main(void)
         /* 调试模式 - 详细状态输出 */
         usart2DebugTestRun();
     #elif RUN_MODE_ECHO_TEST == 1
-        /* 串口2回环测试模式 */
+        /* USART2(PA2/PA3)回环测试模式 */
         usart2EchoTestRun();
     #elif RUN_MODE_ECHO_TEST == 4
-        /* 串口1回环测试模式 */
+        /* USART1(PA9/PA10)回环测试模式 */
         usart1EchoTestRun();
     #else
         /* Modbus双串口模式 */
         while (1) {
-            ModbusRTU_Process(&g_mb);   /* 处理串口2 */
-            ModbusRTU_Process(&g_mb2);  /* 处理串口1 */
+            ModbusRTU_Process(&g_mb);   /* 处理USART1 */
+            ModbusRTU_Process(&g_mb2);  /* 处理USART2 */
             HAL_Delay(1);
         }
     #endif
@@ -165,7 +166,7 @@ static void MX_GPIO_Init(void)
     /* RS485 使能引脚配置 */
     __HAL_RCC_GPIOA_CLK_ENABLE();
     
-    /* 串口1 (USART2) 使能: PA4 */
+    /* USART2 RS485使能: PA4 */
     HAL_GPIO_WritePin(MB_USART2_RS485_DE_GPIO_Port, MB_USART2_RS485_DE_Pin, GPIO_PIN_RESET);
     GPIO_InitStruct.Pin   = MB_USART2_RS485_DE_Pin;
     GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
@@ -173,7 +174,7 @@ static void MX_GPIO_Init(void)
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
     HAL_GPIO_Init(MB_USART2_RS485_DE_GPIO_Port, &GPIO_InitStruct);
     
-    /* 串口2 (USART1) 使能: PA8 */
+    /* USART1 RS485使能: PA8 */
     HAL_GPIO_WritePin(MB_USART1_RS485_DE_GPIO_Port, MB_USART1_RS485_DE_Pin, GPIO_PIN_RESET);
     GPIO_InitStruct.Pin   = MB_USART1_RS485_DE_Pin;
     GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
@@ -187,13 +188,13 @@ static void MX_DMA_Init(void)
 {
     __HAL_RCC_DMA1_CLK_ENABLE();
 
-    /* USART1 (串口2) DMA */
+    /* USART1 DMA */
     HAL_NVIC_SetPriority(DMA1_Channel4_IRQn, 1, 0);  /* TX */
     HAL_NVIC_EnableIRQ(DMA1_Channel4_IRQn);
     HAL_NVIC_SetPriority(DMA1_Channel5_IRQn, 1, 1);  /* RX */
     HAL_NVIC_EnableIRQ(DMA1_Channel5_IRQn);
     
-    /* USART2 (串口1) DMA */
+    /* USART2 DMA */
     HAL_NVIC_SetPriority(DMA1_Channel7_IRQn, 1, 2);  /* TX */
     HAL_NVIC_EnableIRQ(DMA1_Channel7_IRQn);
     HAL_NVIC_SetPriority(DMA1_Channel6_IRQn, 1, 3);  /* RX */
@@ -259,7 +260,7 @@ static void MX_USART1_UART_Init(void)
     HAL_NVIC_EnableIRQ(USART1_IRQn);
 }
 
-/* ---------------- USART2 (PA2 TX, PA3 RX) - 串口1 ---------------- */
+/* ---------------- USART2 (PA2 TX, PA3 RX) ---------------- */
 static void MX_USART2_UART_Init(void)
 {
     __HAL_RCC_USART2_CLK_ENABLE();

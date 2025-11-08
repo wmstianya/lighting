@@ -16,6 +16,7 @@ extern UART_HandleTypeDef huart2;
 extern DMA_HandleTypeDef hdma_usart2_rx;
 extern DMA_HandleTypeDef hdma_usart2_tx;
 
+
 /* TIM3用于RS485延迟切换（非阻塞） - 暂时不使用 */
 // TIM_HandleTypeDef htim3;
 
@@ -138,6 +139,8 @@ void usart2EchoProcess(void)
     
     /* 立即复制数据到发送缓冲区（避免被覆盖） */
     memcpy(echoTxBuffer, echoRxBuffer, rxLen);
+
+
     
     /* 清除接收标志和缓冲区 */
     echoDataReady = 0;

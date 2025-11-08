@@ -47,7 +47,7 @@ void usart1EchoTestInit(void)
     HAL_GPIO_WritePin(ECHO1_RS485_PORT, ECHO1_RS485_PIN, GPIO_PIN_RESET);
     HAL_Delay(10);
 
-    /* 清 IDLE 并启动 DMA 接收 */
+    /* 清 IDLE 并启动 DMA 接收（与USART2一致，显式启用IDLE） */
     __HAL_UART_CLEAR_IDLEFLAG(&huart1);
     __HAL_UART_ENABLE_IT(&huart1, UART_IT_IDLE);
     HAL_UART_Receive_DMA(&huart1, echo1RxBuffer, ECHO1_BUFFER_SIZE);
@@ -56,14 +56,20 @@ void usart1EchoTestInit(void)
 void usart1EchoHandleIdle(void)
 {
     diag1IdleCount++;
+    
+    /* LED快闪表示IDLE触发 */
     HAL_GPIO_WritePin(ECHO1_LED_PORT, ECHO1_LED_PIN, GPIO_PIN_RESET);
 
+    /* 停止DMA */
     HAL_UART_DMAStop(&huart1);
+    
     /* 清 ORE：读 SR 再读 DR */
     volatile uint32_t sr = huart1.Instance->SR; (void)sr;
     volatile uint32_t dr = huart1.Instance->DR; (void)dr;
 
+    /* 计算接收字节数 */
     echo1RxCount = ECHO1_BUFFER_SIZE - __HAL_DMA_GET_COUNTER(&hdma_usart1_rx);
+    
     if (echo1RxCount > 0) {
         echo1DataReady = 1;
         /* 不在这里重启DMA，等待主循环处理完数据后重启 */
@@ -78,11 +84,27 @@ void usart1EchoHandleIdle(void)
 void usart1EchoProcess(void)
 {
     diag1ProcessCount++;
-    if (!echo1DataReady) return;
 
+    /* LED慢闪表示主循环运行（对齐USART2实现） */
+    static uint32_t lastBlink = 0;
+    if (HAL_GetTick() - lastBlink > 1000) {
+        lastBlink = HAL_GetTick();
+        HAL_GPIO_TogglePin(ECHO1_LED_PORT, ECHO1_LED_PIN);
+    }
+    
+    if (!echo1DataReady) {
+        return;
+    }
+
+    /* 保存接收长度 */
     uint16_t rxLen = echo1RxCount;
+    
+    /* 立即复制数据到发送缓冲区（避免被覆盖） */
     memcpy(echo1TxBuffer, echo1RxBuffer, rxLen);
 
+
+
+    /* 清除接收标志和缓冲区 */
     echo1DataReady = 0;
     echo1RxCount = 0;
     memset(echo1RxBuffer, 0, sizeof(echo1RxBuffer));
@@ -131,12 +153,17 @@ void usart1EchoGetDiagnostics(uint32_t *idle, uint32_t *process, uint32_t *txCpl
 void usart1EchoTestRun(void)
 {
     usart1EchoTestInit();
+    
+    /* LED闪3次表示启动 */
     for (uint8_t i = 0; i < 3; i++) {
         HAL_GPIO_WritePin(ECHO1_LED_PORT, ECHO1_LED_PIN, GPIO_PIN_RESET);
         HAL_Delay(200);
         HAL_GPIO_WritePin(ECHO1_LED_PORT, ECHO1_LED_PIN, GPIO_PIN_SET);
         HAL_Delay(200);
     }
+
+    /* 确保开始时RS485处于接收模式（与USART2一致） */
+    HAL_GPIO_WritePin(ECHO1_RS485_PORT, ECHO1_RS485_PIN, GPIO_PIN_RESET);
 
     while (1) {
         usart1EchoProcess();
