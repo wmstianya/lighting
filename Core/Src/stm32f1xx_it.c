@@ -21,20 +21,26 @@
 #include "main.h"
 #include "stm32f1xx_it.h"
 #include "stm32f1xx_hal_tim.h"
-#include "../../MDK-ARM/modbus_rtu_slave.h"
 #include "usart2_echo_test.h"
 #include "usart1_echo_test.h"
 #include "usart2_echo_test_debug.h"
 #include "usart2_simple_test.h"
 #include "app_config.h"  // 配置文件
+#if RUN_MODE_ECHO_TEST == 10
+#include "modbus_port.h"  // 模块化Modbus端口
+#else
+#include "../../MDK-ARM/modbus_rtu_slave.h"
+#endif
 
 // 声明全局 Modbus 实例在main.c中定义
+#if RUN_MODE_ECHO_TEST != 10
 extern ModbusRTU_Slave g_mb;   /* USART1 (PA9/PA10) */
 extern ModbusRTU_Slave g_mb2;  /* USART2 (PA2/PA3) */
+#endif
 
 /* 从 main.c 获取运行模式定义（编译期选择） */
 #ifndef RUN_MODE_ECHO_TEST
-#define RUN_MODE_ECHO_TEST 1  /* 默认USART2(PA2/PA3)回环测试模式 */
+#define RUN_MODE_ECHO_TEST 0  /* 默认modbus双串口模式 */
 #endif
 
 /* 根据 RUN_MODE_ECHO_TEST 自动映射中断处理模式 */
@@ -301,7 +307,17 @@ void DMA1_Channel7_IRQHandler(void)
 void USART1_IRQHandler(void)
 {
   /* USER CODE BEGIN USART1_IRQn 0 */
-  #if USART1_TEST_MODE == 1
+  HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1);  // 任何中断都闪灯
+  #if RUN_MODE_ECHO_TEST == 10
+    /* 模块化Modbus模式 - UART1 */
+    if (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_IDLE) != RESET)
+    {
+      __HAL_UART_CLEAR_IDLEFLAG(&huart1);
+      ModbusPort_UART1_IdleCallback();
+      /* 重要：IDLE已处理，不再调用HAL_UART_IRQHandler */
+      return;
+    }
+  #elif USART1_TEST_MODE == 1
     if (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_IDLE) != RESET)
     {
       __HAL_UART_CLEAR_IDLEFLAG(&huart1);
@@ -310,7 +326,7 @@ void USART1_IRQHandler(void)
       return;
     }
   #else
-    /* Modbus模式：先处理IDLE，再调用HAL（避免HAL清除标志） */
+    /* 旧版Modbus模式：先处理IDLE，再调用HAL（避免HAL清除标志） */
     if (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_IDLE) != RESET)
     {
       __HAL_UART_CLEAR_IDLEFLAG(&huart1);
@@ -331,7 +347,16 @@ void USART1_IRQHandler(void)
 void USART2_IRQHandler(void)
 {
   /* USER CODE BEGIN USART2_IRQn 0 */
-  #if USART2_TEST_MODE == 3
+  #if RUN_MODE_ECHO_TEST == 10
+    /* 模块化Modbus模式 - UART2 */
+    if (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_IDLE) != RESET)
+    {
+      __HAL_UART_CLEAR_IDLEFLAG(&huart2);
+      ModbusPort_UART2_IdleCallback();
+      /* 重要：IDLE已处理，不再调用HAL_UART_IRQHandler */
+      return;
+    }
+  #elif USART2_TEST_MODE == 3
     /* 简单测试模式 */
     if (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_IDLE) != RESET)
     {
@@ -356,7 +381,7 @@ void USART2_IRQHandler(void)
       return;
     }
   #else
-    /* Modbus模式：先处理IDLE，再调用HAL */
+    /* 旧版Modbus模式：先处理IDLE，再调用HAL */
     if (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_IDLE) != RESET)
     {
       __HAL_UART_CLEAR_IDLEFLAG(&huart2);
@@ -387,13 +412,25 @@ void USART2_IRQHandler(void)
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
   /* USER CODE BEGIN HAL_UART_TxCpltCallback 0 */
-  #if USART1_TEST_MODE == 1
+  #if RUN_MODE_ECHO_TEST == 10
+    /* 模块化Modbus模式 */
+    if (huart == &huart1) {
+      ModbusPort_UART1_TxCpltCallback();
+      return;
+    }
+    else if (huart == &huart2) {
+      ModbusPort_UART2_TxCpltCallback();
+      return;
+    }
+  #elif USART1_TEST_MODE == 1
     if (huart == &huart1) {
       usart1EchoTxCallback(huart);
       return;
     }
   #endif
-  /* Modbus: USART1 Tx 完成处理 */
+  
+  /* 旧版Modbus: USART1 Tx 完成处理 */
+  #if RUN_MODE_ECHO_TEST != 10
   if (huart == &huart1) {
     /* 等待 TC，避免过早切 DE */
     uint32_t t0 = HAL_GetTick();
@@ -403,6 +440,8 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
     ModbusRTU_TxCpltISR(&g_mb);
     return;
   }
+  #endif
+  
   #if USART2_TEST_MODE == 3
     /* 简单测试模式 - USART2发送完成 */
     if (huart == &huart2) {
@@ -423,7 +462,8 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
     }
   #endif
   
-  /* 处理USART1 - Modbus */
+  /* 处理USART1 - Modbus (旧版) */
+  #if RUN_MODE_ECHO_TEST != 10
   if (huart == &huart1) {
     /* Step 1: Switch RS485 to receive mode */
     HAL_GPIO_WritePin(MB_USART1_RS485_DE_GPIO_Port, MB_USART1_RS485_DE_Pin, GPIO_PIN_RESET);
@@ -449,6 +489,7 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
       return;
     }
   #endif
+  #endif
   /* USER CODE END HAL_UART_TxCpltCallback 0 */
   
   /* USER CODE BEGIN HAL_UART_TxCpltCallback 1 */
@@ -464,6 +505,7 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
   volatile uint32_t sr = huart->Instance->SR; (void)sr;
   volatile uint32_t dr = huart->Instance->DR; (void)dr;
 
+  #if RUN_MODE_ECHO_TEST != 10
   if (huart == &huart1) {
     /* Modbus USART1 恢复接收 */
     HAL_UART_Receive_DMA(&huart1, g_mb.rxBuffer, MB_RTU_FRAME_MAX_SIZE);
@@ -475,6 +517,7 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
       HAL_UART_Receive_DMA(&huart2, g_mb2.rxBuffer, MB_RTU_FRAME_MAX_SIZE);
       return;
     }
+  #endif
   #endif
 }
 

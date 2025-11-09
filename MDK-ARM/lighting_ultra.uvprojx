@@ -544,6 +544,26 @@
               <FileType>5</FileType>
               <FilePath>.\modbus_rtu_slave.h</FilePath>
             </File>
+            <File>
+              <FileName>modbus_rtu_core.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\modbus_rtu_core.c</FilePath>
+            </File>
+            <File>
+              <FileName>modbus_port_uart1.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\modbus_port_uart1.c</FilePath>
+            </File>
+            <File>
+              <FileName>modbus_port_uart2.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\modbus_port_uart2.c</FilePath>
+            </File>
+            <File>
+              <FileName>modbus_app.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\modbus_app.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
