@@ -35,9 +35,9 @@ void ModbusPort_UART2_Init(ModbusRTU_t *mb)
     modbusPortUart2.rs485Port = GPIOA;
     modbusPortUart2.rs485Pin = GPIO_PIN_4;
     
-    /* LED指示引脚：PB1 */
-    modbusPortUart2.ledPort = GPIOB;
-    modbusPortUart2.ledPin = GPIO_PIN_1;
+    /* 关闭LED指示，释放PB1给DO1使用 */
+    modbusPortUart2.ledPort = NULL;
+    modbusPortUart2.ledPin = 0;
     
     /* 关联Modbus实例 */
     modbusPortUart2.modbusInstance = mb;

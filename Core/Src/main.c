@@ -14,6 +14,7 @@
 #include "usart2_simple_test.h"
 #include "usart1_echo_test.h"
 #include "app_config.h"
+#include "relay.h"
 #if RUN_MODE_ECHO_TEST == 10
 #include "modbus_app.h"  /* 模块化Modbus应用 */
 #else
@@ -103,6 +104,11 @@ int main(void)
         /* 模块化Modbus双串口模式 */
         ModbusApp_Init();
         
+        /* 系统自检完成：蜂鸣器滴一声 */
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);
+        HAL_Delay(200);
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
+        
         while (1) {
             ModbusApp_Process();  /* 处理两个串口的Modbus */
             
@@ -111,6 +117,13 @@ int main(void)
             if (HAL_GetTick() - lastSensorUpdate > 1000) {
                 lastSensorUpdate = HAL_GetTick();
                 ModbusApp_UpdateSensorData();
+            }
+            
+            /* 喂狗：每500ms翻转PC14 */
+            static uint32_t lastWdtToggle = 0;
+            if (HAL_GetTick() - lastWdtToggle > 500) {
+                lastWdtToggle = HAL_GetTick();
+                HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_14);
             }
             
             HAL_Delay(1);
@@ -185,6 +198,23 @@ static void MX_GPIO_Init(void)
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
     HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
+    /* PB14 蜂鸣器 */
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
+    GPIO_InitStruct.Pin   = GPIO_PIN_14;
+    GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull  = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+    /* PC14 外部看门狗喂狗信号 */
+    __HAL_RCC_GPIOC_CLK_ENABLE();
+    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_14, GPIO_PIN_RESET);
+    GPIO_InitStruct.Pin   = GPIO_PIN_14;
+    GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull  = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
     /* RS485 使能引脚配置 */
     __HAL_RCC_GPIOA_CLK_ENABLE();
     
@@ -223,21 +253,7 @@ static void MX_GPIO_Init(void)
       HAL_GPIO_Init(MB_USART1_RS485_DE_GPIO_Port, &GPIO_InitStruct);
     #endif
 
-    /* 继电器 DO1..DO5 输出初始化：PB4, PB3, PA15, PA12, PA11 */
-    /* 默认关闭（RESET） */
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4 | GPIO_PIN_3, GPIO_PIN_RESET);
-    GPIO_InitStruct.Pin   = GPIO_PIN_4 | GPIO_PIN_3;
-    GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
-    GPIO_InitStruct.Pull  = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15 | GPIO_PIN_12 | GPIO_PIN_11, GPIO_PIN_RESET);
-    GPIO_InitStruct.Pin   = GPIO_PIN_15 | GPIO_PIN_12 | GPIO_PIN_11;
-    GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
-    GPIO_InitStruct.Pull  = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 }
 
 /* ---------------- DMA ---------------- */

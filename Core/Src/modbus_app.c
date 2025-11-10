@@ -39,7 +39,14 @@ static uint8_t uart2_discreteInputs[5];  /* 40 bits */
 static void setDoByIndex(uint16_t index, uint8_t on)
 {
     if (index >= RELAY_CHANNEL_COUNT) return;
+    
+    /* 通过relay驱动统一管理（高电平有效）*/
     relaySetState((RelayChannel_e)index, on ? RELAY_STATE_ON : RELAY_STATE_OFF);
+    
+    /* PB1同步指示 DO1 状态（低电平点亮） */
+    if (index == 0) {
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, on ? GPIO_PIN_RESET : GPIO_PIN_SET);
+    }
 }
 
 static void uart1_onCoilChanged(uint16_t addr, uint8_t value)
@@ -55,9 +62,11 @@ static void uart1_onCoilChanged(uint16_t addr, uint8_t value)
  */
 static void uart1_onRegChanged(uint16_t addr, uint16_t value)
 {
-    /* 示例：寄存器0控制LED闪烁频率 */
+    /* 寄存器0的bit0..4控制DO1..DO5 */
     if (addr == 0) {
-        /* 可以设置某个定时器的频率等 */
+        for (uint16_t i = 0; i < 5; i++) {
+            setDoByIndex(i, (value & (1 << i)) ? 1 : 0);
+        }
     }
 }
 
@@ -76,7 +85,12 @@ static void uart2_onCoilChanged(uint16_t addr, uint8_t value)
  */
 static void uart2_onRegChanged(uint16_t addr, uint16_t value)
 {
-    /* UART2的寄存器控制逻辑 */
+    /* 寄存器0的bit0..4控制DO1..DO5 */
+    if (addr == 0) {
+        for (uint16_t i = 0; i < 5; i++) {
+            setDoByIndex(i, (value & (1 << i)) ? 1 : 0);
+        }
+    }
 }
 
 /* ==================== 初始化函数 ==================== */
