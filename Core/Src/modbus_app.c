@@ -40,11 +40,15 @@ static void setDoByIndex(uint16_t index, uint8_t on)
 {
     if (index >= RELAY_CHANNEL_COUNT) return;
     
-    /* 通过relay驱动统一管理（高电平有效）*/
-    relaySetState((RelayChannel_e)index, on ? RELAY_STATE_ON : RELAY_STATE_OFF);
+    /* PB1只与DO1绑定：仅当操作DO1且状态真正改变时才更新PB1 */
+    RelayState_e oldState = relayGetState((RelayChannel_e)index);
+    RelayState_e newState = on ? RELAY_STATE_ON : RELAY_STATE_OFF;
     
-    /* PB1同步指示 DO1 状态（低电平点亮） */
-    if (index == 0) {
+    /* 通过relay驱动统一管理（高电平有效）*/
+    relaySetState((RelayChannel_e)index, newState);
+    
+    /* PB1同步指示DO1状态（低电平点亮），仅当DO1状态改变时更新 */
+    if (index == 0 && oldState != newState) {
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, on ? GPIO_PIN_RESET : GPIO_PIN_SET);
     }
 }

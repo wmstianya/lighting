@@ -307,7 +307,7 @@ void DMA1_Channel7_IRQHandler(void)
 void USART1_IRQHandler(void)
 {
   /* USER CODE BEGIN USART1_IRQn 0 */
-  HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1);  // 任何中断都闪灯
+  //HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1);  // 任何中断都闪灯
   #if RUN_MODE_ECHO_TEST == 10
     /* 模块化Modbus模式 - UART1 */
     if (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_IDLE) != RESET)

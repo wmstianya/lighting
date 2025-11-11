@@ -2,7 +2,7 @@
  * @Author: Administrator wmstianya@gmail.com
  * @Date: 2025-08-20 15:21:11
  * @LastEditors: Administrator wmstianya@gmail.com
- * @LastEditTime: 2025-11-09 22:36:49
+ * @LastEditTime: 2025-11-11 09:28:07
  * @FilePath: \MDK-ARMe:\data\lighting_ultra\lighting_ultra\Core\Src\main.c
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
@@ -15,6 +15,7 @@
 #include "usart1_echo_test.h"
 #include "app_config.h"
 #include "relay.h"
+#include "beep.h"
 #if RUN_MODE_ECHO_TEST == 10
 #include "modbus_app.h"  /* 模块化Modbus应用 */
 #else
@@ -54,12 +55,17 @@ static void MX_USART2_UART_Init(void);  /* USART2: PA2/PA3 */
 /* ---------------- 用户写寄存器回调（示例：保持寄存器0 控制 LED） ---------------- */
 void ModbusRTU_PostWriteCallback(uint16_t addr, uint16_t value)
 {
+    #if RUN_MODE_ECHO_TEST != 10
     if (addr == 0) {
-        /* PB1 低电平点亮 */
+        /* PB1 低电平点亮 - 旧版Modbus模式才使用 */
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, (value > 0) ? GPIO_PIN_RESET : GPIO_PIN_SET);
     }
+    #else
+    /* 模块化模式下不使用此回调，由modbus_app.c中的回调处理 */
+    (void)addr;
+    (void)value;
+    #endif
 }
-
 /* ---------------- 主程序 ---------------- */
 int main(void)
 {
@@ -76,6 +82,9 @@ int main(void)
     /* 为了调试方便，两个串口的IDLE中断都启用 */
     __HAL_UART_ENABLE_IT(&huart1, UART_IT_IDLE);
     __HAL_UART_ENABLE_IT(&huart2, UART_IT_IDLE);
+    
+    /* 初始化蜂鸣器驱动 */
+    beepInit();
 
     #if RUN_MODE_ECHO_TEST == 0
         /* 仅在Modbus模式下初始化 */
@@ -104,13 +113,14 @@ int main(void)
         /* 模块化Modbus双串口模式 */
         ModbusApp_Init();
         
-        /* 系统自检完成：蜂鸣器滴一声 */
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);
-        HAL_Delay(200);
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
+        /* 系统自检完成：蜂鸣器滴一声（非阻塞式） */
+        beepSetTime(600);
         
         while (1) {
             ModbusApp_Process();  /* 处理两个串口的Modbus */
+            
+            /* 蜂鸣器定时处理（非阻塞式自动关闭） */
+            beepProcess();
             
             /* 定期更新传感器数据（示例） */
             static uint32_t lastSensorUpdate = 0;
@@ -198,13 +208,7 @@ static void MX_GPIO_Init(void)
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
     HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-    /* PB14 蜂鸣器 */
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
-    GPIO_InitStruct.Pin   = GPIO_PIN_14;
-    GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
-    GPIO_InitStruct.Pull  = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+    /* PB14 蜂鸣器：由beep.c模块初始化（TIM1_CH2N PWM） */
 
     /* PC14 外部看门狗喂狗信号 */
     __HAL_RCC_GPIOC_CLK_ENABLE();

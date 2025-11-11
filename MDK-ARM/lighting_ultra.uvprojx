@@ -435,6 +435,11 @@
               <FilePath>../Core/Src/relay.c</FilePath>
             </File>
             <File>
+              <FileName>beep.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/beep.c</FilePath>
+            </File>
+            <File>
               <FileName>relay_test.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Core/Src/relay_test.c</FilePath>
@@ -483,6 +488,16 @@
               <FileName>stm32f1xx_hal_gpio.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_gpio.c</FilePath>
+            </File>
+            <File>
+              <FileName>stm32f1xx_hal_tim.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_tim.c</FilePath>
+            </File>
+            <File>
+              <FileName>stm32f1xx_hal_tim_ex.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_tim_ex.c</FilePath>
             </File>
             <File>
               <FileName>stm32f1xx_hal_dma.c</FileName>
@@ -534,16 +549,6 @@
         <Group>
           <GroupName>Modbus</GroupName>
           <Files>
-            <File>
-              <FileName>modbus_rtu_slave.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>.\modbus_rtu_slave.c</FilePath>
-            </File>
-            <File>
-              <FileName>modbus_rtu_slave.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>.\modbus_rtu_slave.h</FilePath>
-            </File>
             <File>
               <FileName>modbus_rtu_core.c</FileName>
               <FileType>1</FileType>
