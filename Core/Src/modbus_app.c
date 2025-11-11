@@ -10,6 +10,9 @@
 #include "modbus_port.h"
 #include "main.h"     /* HAL GPIO */
 #include "relay.h"  /* 继电器驱动 */
+#include "led.h"    /* LED指示灯驱动 */
+#include "pressure_sensor.h"  /* 压力传感器驱动 */
+#include "water_level.h"  /* 水位检测驱动 */
 
 /* ==================== Modbus实例 ==================== */
 /* UART1 Modbus实例 */
@@ -40,16 +43,15 @@ static void setDoByIndex(uint16_t index, uint8_t on)
 {
     if (index >= RELAY_CHANNEL_COUNT) return;
     
-    /* PB1只与DO1绑定：仅当操作DO1且状态真正改变时才更新PB1 */
-    RelayState_e oldState = relayGetState((RelayChannel_e)index);
+    /* 通过relay驱动统一管理继电器（高电平有效）*/
     RelayState_e newState = on ? RELAY_STATE_ON : RELAY_STATE_OFF;
-    
-    /* 通过relay驱动统一管理（高电平有效）*/
     relaySetState((RelayChannel_e)index, newState);
     
-    /* PB1同步指示DO1状态（低电平点亮），仅当DO1状态改变时更新 */
-    if (index == 0 && oldState != newState) {
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, on ? GPIO_PIN_RESET : GPIO_PIN_SET);
+    /* LED指示灯同步DO状态：LED1-LED4对应DO1-DO4（低电平点亮） */
+    /* LED模块内部已有状态检查，只在状态改变时才操作GPIO */
+    if (index < LED_CHANNEL_COUNT) {
+        LedState_e ledState = on ? LED_STATE_ON : LED_STATE_OFF;
+        ledSetState((LedChannel_e)index, ledState);
     }
 }
 
@@ -186,28 +188,83 @@ void ModbusApp_Process(void)
 }
 
 /**
- * @brief 更新传感器数据示例
- * @note 可以在定时器中断或主循环中调用
+ * @brief 更新传感器数据
+ * @note 在主循环中每1秒调用一次
  */
 void ModbusApp_UpdateSensorData(void)
 {
     static uint16_t counter = 0;
     counter++;
     
-    /* 更新UART1输入寄存器（模拟传感器数据） */
+    /* 获取压力传感器数据 */
+    PressureData_t pressureData = pressureSensorGetData();
+    
+    /* 更新UART1输入寄存器（实际传感器数据） */
     uart1_inputRegs[0] = counter;  /* 计数器 */
-    uart1_inputRegs[1] = 250 + (counter % 100);  /* 模拟温度 */
-    uart1_inputRegs[2] = 500 + (counter % 50);   /* 模拟湿度 */
     
-    /* 更新UART2输入寄存器 */
-    uart2_inputRegs[0] = counter * 2;
-    uart2_inputRegs[1] = 300 + (counter % 80);
-    uart2_inputRegs[2] = 600 + (counter % 40);
+    /* 压力值（单位：0.001 MPa，即压力值×1000） */
+    uart1_inputRegs[1] = (uint16_t)(pressureData.pressureFiltered * 1000.0f);
     
-    /* 更新离散输入（模拟开关状态） */
-    if (counter % 100 == 0) {
-        uart1_discreteInputs[0] = ~uart1_discreteInputs[0];
-        uart2_discreteInputs[0] = ~uart2_discreteInputs[0];
+    /* 电流值（单位：0.01 mA，即电流值×100） */
+    uart1_inputRegs[2] = (uint16_t)(pressureData.current * 100.0f);
+    
+    /* ADC原始值 */
+    uart1_inputRegs[3] = pressureData.adcRaw;
+    
+    /* 数据有效标志 (0=无效, 1=有效) */
+    uart1_inputRegs[4] = pressureData.isValid ? 1 : 0;
+    
+    /* 更新UART2输入寄存器（可用于第二个传感器或备份） */
+    uart2_inputRegs[0] = counter;
+    uart2_inputRegs[1] = (uint16_t)(pressureData.pressureFiltered * 1000.0f);
+    uart2_inputRegs[2] = (uint16_t)(pressureData.current * 100.0f);
+    
+    /* 获取水位检测数据 */
+    WaterLevelState_e waterLevel = waterLevelGetLevel();
+    bool lowProbe, midProbe, highProbe;
+    waterLevelGetProbeStates(&lowProbe, &midProbe, &highProbe);
+    
+    /* 更新离散输入（字节0：压力传感器状态） */
+    uart1_discreteInputs[0] = 0;
+    if (pressureData.isValid) {
+        uart1_discreteInputs[0] |= 0x01;  /* bit0: 压力数据有效 */
+    }
+    if (pressureData.pressureFiltered > 1.0f) {
+        uart1_discreteInputs[0] |= 0x02;  /* bit1: 压力超过1.0 MPa */
+    }
+    if (pressureData.pressureFiltered > 1.4f) {
+        uart1_discreteInputs[0] |= 0x04;  /* bit2: 压力超过1.4 MPa（报警） */
+    }
+    
+    /* 更新离散输入（字节1：水位探针原始状态，0=有水） */
+    uart1_discreteInputs[1] = 0;
+    if (!lowProbe) uart1_discreteInputs[1] |= 0x01;  /* bit0: DI1低水位探针有水 */
+    if (!midProbe) uart1_discreteInputs[1] |= 0x02;  /* bit1: DI2中水位探针有水 */
+    if (!highProbe) uart1_discreteInputs[1] |= 0x04; /* bit2: DI3高水位探针有水 */
+    
+    /* 更新离散输入（字节2：水位状态编码） */
+    uart1_discreteInputs[2] = 0;
+    switch (waterLevel) {
+        case WATER_LEVEL_NONE:
+            uart1_discreteInputs[2] = 0x00;  /* 无水 */
+            break;
+        case WATER_LEVEL_LOW:
+            uart1_discreteInputs[2] = 0x01;  /* 低水位 */
+            break;
+        case WATER_LEVEL_MID:
+            uart1_discreteInputs[2] = 0x02;  /* 中水位 */
+            break;
+        case WATER_LEVEL_HIGH:
+            uart1_discreteInputs[2] = 0x03;  /* 高水位 */
+            break;
+        case WATER_LEVEL_ERROR:
+            uart1_discreteInputs[2] = 0xFF;  /* 异常 */
+            break;
+    }
+    
+    /* 水位状态稳定标志 */
+    if (waterLevelIsStable()) {
+        uart1_discreteInputs[2] |= 0x80;  /* bit7: 水位稳定 */
     }
 }
 

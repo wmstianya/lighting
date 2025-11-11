@@ -440,6 +440,31 @@
               <FilePath>../Core/Src/beep.c</FilePath>
             </File>
             <File>
+              <FileName>led.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/led.c</FilePath>
+            </File>
+            <File>
+              <FileName>watchdog.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/watchdog.c</FilePath>
+            </File>
+            <File>
+              <FileName>kalman.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/kalman.c</FilePath>
+            </File>
+            <File>
+              <FileName>pressure_sensor.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/pressure_sensor.c</FilePath>
+            </File>
+            <File>
+              <FileName>water_level.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/water_level.c</FilePath>
+            </File>
+            <File>
               <FileName>relay_test.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Core/Src/relay_test.c</FilePath>
@@ -488,6 +513,16 @@
               <FileName>stm32f1xx_hal_gpio.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_gpio.c</FilePath>
+            </File>
+            <File>
+              <FileName>stm32f1xx_hal_adc.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_adc.c</FilePath>
+            </File>
+            <File>
+              <FileName>stm32f1xx_hal_adc_ex.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_adc_ex.c</FilePath>
             </File>
             <File>
               <FileName>stm32f1xx_hal_tim.c</FileName>

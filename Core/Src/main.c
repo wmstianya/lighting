@@ -16,6 +16,10 @@
 #include "app_config.h"
 #include "relay.h"
 #include "beep.h"
+#include "led.h"
+#include "watchdog.h"
+#include "pressure_sensor.h"
+#include "water_level.h"
 #if RUN_MODE_ECHO_TEST == 10
 #include "modbus_app.h"  /* 模块化Modbus应用 */
 #else
@@ -85,6 +89,18 @@ int main(void)
     
     /* 初始化蜂鸣器驱动 */
     beepInit();
+    
+    /* 初始化LED指示灯驱动 */
+    ledInit();
+    
+    /* 初始化外部看门狗驱动 */
+    watchdogInit();
+    
+    /* 初始化压力传感器（量程：0-1.6 MPa） */
+    pressureSensorInit(0.0f, 1.6f);
+    
+    /* 初始化水位检测模块 */
+    waterLevelInit();
 
     #if RUN_MODE_ECHO_TEST == 0
         /* 仅在Modbus模式下初始化 */
@@ -122,6 +138,12 @@ int main(void)
             /* 蜂鸣器定时处理（非阻塞式自动关闭） */
             beepProcess();
             
+            /* 压力传感器采集处理（100ms自动采样） */
+            pressureSensorProcess();
+            
+            /* 水位检测处理（50ms自动采样，带防抖） */
+            waterLevelProcess();
+            
             /* 定期更新传感器数据（示例） */
             static uint32_t lastSensorUpdate = 0;
             if (HAL_GetTick() - lastSensorUpdate > 1000) {
@@ -129,12 +151,8 @@ int main(void)
                 ModbusApp_UpdateSensorData();
             }
             
-            /* 喂狗：每500ms翻转PC14 */
-            static uint32_t lastWdtToggle = 0;
-            if (HAL_GetTick() - lastWdtToggle > 500) {
-                lastWdtToggle = HAL_GetTick();
-                HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_14);
-            }
+            /* 喂狗：外部看门狗TPS3823-33DBVR */
+            watchdogFeed();
             
             HAL_Delay(1);
         }
@@ -200,24 +218,11 @@ static void MX_GPIO_Init(void)
 
     GPIO_InitTypeDef GPIO_InitStruct = {0};
 
-    /* PB1 LED */
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
-    GPIO_InitStruct.Pin   = GPIO_PIN_1;
-    GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
-    GPIO_InitStruct.Pull  = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
+    /* LED1-LED4 (PB1/PB15/PB5/PB6)：由led.c模块初始化 */
+    
     /* PB14 蜂鸣器：由beep.c模块初始化（TIM1_CH2N PWM） */
-
-    /* PC14 外部看门狗喂狗信号 */
-    __HAL_RCC_GPIOC_CLK_ENABLE();
-    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_14, GPIO_PIN_RESET);
-    GPIO_InitStruct.Pin   = GPIO_PIN_14;
-    GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
-    GPIO_InitStruct.Pull  = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-    HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+    
+    /* PC14 外部看门狗：由watchdog.c模块初始化（TPS3823-33DBVR） */
 
     /* RS485 使能引脚配置 */
     __HAL_RCC_GPIOA_CLK_ENABLE();
