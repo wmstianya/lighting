@@ -2,11 +2,11 @@
  * @Author: Administrator wmstianya@gmail.com
  * @Date: 2025-08-20 15:21:11
  * @LastEditors: Administrator wmstianya@gmail.com
- * @LastEditTime: 2025-11-11 09:28:07
+ * @LastEditTime: 2025-11-11 16:04:04
  * @FilePath: \MDK-ARMe:\data\lighting_ultra\lighting_ultra\Core\Src\main.c
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
-/* main.c — STM32F103VCT6 + HAL + USART1 DMA + TIM2 + IDLE 检帧 + 快照式读 */
+/* main.c — STM32F103C8T6 + HAL + USART1 DMA + TIM2 + IDLE 检帧 + 快照式读 */
 #include "stm32f1xx_hal.h"
 #include "stm32f1xx_hal_tim.h"
 #include "usart2_echo_test.h"
@@ -20,6 +20,8 @@
 #include "watchdog.h"
 #include "pressure_sensor.h"
 #include "water_level.h"
+#include "config_manager.h"
+#include "error_handler.h"
 #if RUN_MODE_ECHO_TEST == 10
 #include "modbus_app.h"  /* 模块化Modbus应用 */
 #else
@@ -87,6 +89,13 @@ int main(void)
     __HAL_UART_ENABLE_IT(&huart1, UART_IT_IDLE);
     __HAL_UART_ENABLE_IT(&huart2, UART_IT_IDLE);
     
+    /* 初始化配置管理模块（从Flash加载或使用默认配置） */
+    configManagerInit();
+    const SystemConfig_t* config = configGet();
+    
+    /* 初始化错误处理框架 */
+    errorHandlerInit();
+    
     /* 初始化蜂鸣器驱动 */
     beepInit();
     
@@ -96,8 +105,8 @@ int main(void)
     /* 初始化外部看门狗驱动 */
     watchdogInit();
     
-    /* 初始化压力传感器（量程：0-1.6 MPa） */
-    pressureSensorInit(0.0f, 1.6f);
+    /* 初始化压力传感器（使用配置参数） */
+    pressureSensorInit(config->pressureMin, config->pressureMax);
     
     /* 初始化水位检测模块 */
     waterLevelInit();
@@ -129,8 +138,8 @@ int main(void)
         /* 模块化Modbus双串口模式 */
         ModbusApp_Init();
         
-        /* 系统自检完成：蜂鸣器滴一声（非阻塞式） */
-        beepSetTime(600);
+        /* 系统自检完成：蜂鸣器提示 */
+        beepSetTime(200);
         
         while (1) {
             ModbusApp_Process();  /* 处理两个串口的Modbus */

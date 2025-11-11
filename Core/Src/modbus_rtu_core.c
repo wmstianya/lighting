@@ -319,10 +319,11 @@ static void modbusProcessFrame(ModbusRTU_t *mb)
     mb->stats.rxFrameCount++;
     
     /* LED指示 */
+		/***
     if (mb->hw.ledIndicate) {
         mb->hw.ledIndicate(mb->hw.portContext, 1);
     }
-    
+    ***/
     switch (mb->rxBuffer[1]) {
         case MODBUS_FC_READ_COILS:
             txLen = modbusHandleReadCoils(mb, mb->rxBuffer);

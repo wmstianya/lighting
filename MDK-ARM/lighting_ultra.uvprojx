@@ -465,6 +465,16 @@
               <FilePath>../Core/Src/water_level.c</FilePath>
             </File>
             <File>
+              <FileName>config_manager.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/config_manager.c</FilePath>
+            </File>
+            <File>
+              <FileName>error_handler.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/error_handler.c</FilePath>
+            </File>
+            <File>
               <FileName>relay_test.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Core/Src/relay_test.c</FilePath>

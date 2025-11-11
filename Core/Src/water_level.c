@@ -7,6 +7,7 @@
  */
 
 #include "water_level.h"
+#include "error_handler.h"
 
 /* ==================== 私有变量 ==================== */
 static WaterLevelData_t waterLevelData;
@@ -92,6 +93,15 @@ static WaterLevelState_e determineWaterLevel(bool lowWater, bool midWater, bool 
     }
     
     /* 异常状态（如中探针有水但低探针无水，不符合物理规律） */
+    /* 详细异常分类 */
+    if (lowWater && !midWater) {
+        ERROR_REPORT_WARNING(ERROR_WATER_LOW_BUT_MID_HIGH, "Low Dry But Mid Wet");
+    } else if (lowWater && !highWater) {
+        ERROR_REPORT_WARNING(ERROR_WATER_LOW_BUT_MID_HIGH, "Low Dry But High Wet");
+    } else {
+        ERROR_REPORT_WARNING(ERROR_WATER_DISCONTINUOUS, "Water Discontinuous");
+    }
+    
     return WATER_LEVEL_ERROR;
 }
 

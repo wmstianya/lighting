@@ -13,6 +13,8 @@
 #include "led.h"    /* LED指示灯驱动 */
 #include "pressure_sensor.h"  /* 压力传感器驱动 */
 #include "water_level.h"  /* 水位检测驱动 */
+#include "config_manager.h"  /* 配置管理 */
+#include "error_handler.h"   /* 错误处理 */
 
 /* ==================== Modbus实例 ==================== */
 /* UART1 Modbus实例 */
@@ -106,12 +108,14 @@ static void uart2_onRegChanged(uint16_t addr, uint16_t value)
 void ModbusApp_Init(void)
 {
     uint16_t i;
+    const SystemConfig_t* config = configGet();
+    
     /* 初始化继电器驱动 */
     relayInit();
     
     /* ========== 初始化UART1 Modbus ========== */
-    /* 设置从站地址 */
-    ModbusRTU_SetSlaveAddr(&modbusUart1, 0x01);
+    /* 设置从站地址（从配置读取） */
+    ModbusRTU_SetSlaveAddr(&modbusUart1, config->modbus1SlaveAddr);
     
     /* 设置数据存储 */
     ModbusRTU_SetHoldingRegs(&modbusUart1, uart1_holdingRegs, 100);
@@ -142,8 +146,8 @@ void ModbusApp_Init(void)
     ModbusRTU_Init(&modbusUart1);
     
     /* ========== 初始化UART2 Modbus ========== */
-    /* 设置从站地址 */
-    ModbusRTU_SetSlaveAddr(&modbusUart2, 0x02);
+    /* 设置从站地址（从配置读取） */
+    ModbusRTU_SetSlaveAddr(&modbusUart2, config->modbus2SlaveAddr);
     
     /* 设置数据存储 */
     ModbusRTU_SetHoldingRegs(&modbusUart2, uart2_holdingRegs, 100);
@@ -213,6 +217,15 @@ void ModbusApp_UpdateSensorData(void)
     
     /* 数据有效标志 (0=无效, 1=有效) */
     uart1_inputRegs[4] = pressureData.isValid ? 1 : 0;
+    
+    /* 系统错误状态（位掩码） */
+    uart1_inputRegs[5] = (uint16_t)(errorGetActiveMask() & 0xFFFF);
+    
+    /* 系统错误状态（高16位） */
+    uart1_inputRegs[6] = (uint16_t)((errorGetActiveMask() >> 16) & 0xFFFF);
+    
+    /* 错误日志总数 */
+    uart1_inputRegs[7] = errorLogGetCount();
     
     /* 更新UART2输入寄存器（可用于第二个传感器或备份） */
     uart2_inputRegs[0] = counter;

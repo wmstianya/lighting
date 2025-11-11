@@ -22,15 +22,22 @@ Dialog DLL:      TCM.DLL V1.14.4.0
  
 <h2>Project:</h2>
 E:\data\lighting_ultra\lighting_ultra\MDK-ARM\lighting_ultra.uvprojx
-Project File Date:  11/05/2025
+Project File Date:  11/11/2025
 
 <h2>Output:</h2>
 Build target 'lighting_ultra'
-compiling usart2_echo_test.c...
+compiling beep.c...
+compiling config_manager.c...
+../Core/Src/config_manager.c(14): warning:  #550-D: variable "configLoaded" was set but never used
+  static bool configLoaded = false;
+../Core/Src/config_manager.c(65): warning:  #177-D: function "readConfigFromFlash" was declared but never referenced
+  static HAL_StatusTypeDef readConfigFromFlash(SystemConfig_t* config)
+../Core/Src/config_manager.c: 2 warnings, 0 errors
+compiling error_handler.c...
 linking...
-Program Size: Code=7696 RO-data=312 RW-data=44 ZI-data=3692  
+Program Size: Code=17198 RO-data=882 RW-data=140 ZI-data=4980  
 FromELF: creating hex file...
-"lighting_ultra\lighting_ultra.axf" - 0 Error(s), 0 Warning(s).
+"lighting_ultra\lighting_ultra.axf" - 0 Error(s), 2 Warning(s).
 
 <h2>Software Packages used:</h2>
 

@@ -7,6 +7,7 @@
  */
 
 #include "pressure_sensor.h"
+#include "error_handler.h"
 #include <math.h>
 
 /* ==================== 私有变量 ==================== */
@@ -44,6 +45,7 @@ static HAL_StatusTypeDef initAdc(void)
     hadcPressure.Init.NbrOfConversion = 1;
     
     if (HAL_ADC_Init(&hadcPressure) != HAL_OK) {
+        ERROR_REPORT_CRITICAL(ERROR_ADC_INIT_FAILED, "ADC1 Init Fail");
         return HAL_ERROR;
     }
     
@@ -53,6 +55,7 @@ static HAL_StatusTypeDef initAdc(void)
     sConfig.SamplingTime = ADC_SAMPLETIME_239CYCLES_5;  /* 慢速采样，提高精度 */
     
     if (HAL_ADC_ConfigChannel(&hadcPressure, &sConfig) != HAL_OK) {
+        ERROR_REPORT_CRITICAL(ERROR_ADC_INIT_FAILED, "ADC Ch8 Config Fail");
         return HAL_ERROR;
     }
     
@@ -136,6 +139,7 @@ HAL_StatusTypeDef pressureSensorInit(float pressureMin, float pressureMax)
     
     /* 初始化ADC */
     if (initAdc() != HAL_OK) {
+        ERROR_REPORT_CRITICAL(ERROR_ADC_INIT_FAILED, "Pressure ADC Init");
         return HAL_ERROR;
     }
     
@@ -176,6 +180,7 @@ HAL_StatusTypeDef pressureSensorSample(void)
         
         /* 等待转换完成（最大10ms超时） */
         if (HAL_ADC_PollForConversion(&hadcPressure, 10) != HAL_OK) {
+            ERROR_REPORT_ERROR(ERROR_ADC_CONVERSION_TIMEOUT, "ADC Conv Timeout");
             return HAL_ERROR;
         }
         
@@ -204,9 +209,18 @@ HAL_StatusTypeDef pressureSensorSample(void)
         
         /* 卡尔曼滤波 */
         pressureData.pressureFiltered = kalmanUpdate(&kalmanFilter, pressureData.pressureRaw);
+        
+        /* 清除传感器故障错误 */
+        errorClear(ERROR_PRESSURE_SENSOR_FAULT);
     } else {
         /* 数据无效，保持上一次的滤波值 */
         pressureData.pressureRaw = 0.0f;
+        
+        /* 报告传感器故障（每10次采样报告一次，避免刷屏） */
+        static uint32_t faultCount = 0;
+        if (++faultCount % 10 == 0) {
+            ERROR_REPORT_WARNING(ERROR_PRESSURE_SENSOR_FAULT, "Current Out Range");
+        }
     }
     
     /* 更新采样计数 */

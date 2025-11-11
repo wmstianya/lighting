@@ -51,7 +51,8 @@ static void beepInitTimer(void)
     htimBeep.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
     
     if (HAL_TIM_PWM_Init(&htimBeep) != HAL_OK) {
-        Error_Handler();
+        /* TIM1初始化失败，使用GPIO直接驱动模式 */
+        return;
     }
     
     /* 配置PWM通道2（互补输出CH2N） */
@@ -65,7 +66,7 @@ static void beepInitTimer(void)
     sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
     
     if (HAL_TIM_PWM_ConfigChannel(&htimBeep, &sConfigOC, TIM_CHANNEL_2) != HAL_OK) {
-        Error_Handler();
+        return;
     }
     
     /* 配置刹车和死区（高级定时器必需） */
@@ -79,7 +80,7 @@ static void beepInitTimer(void)
     sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
     
     if (HAL_TIMEx_ConfigBreakDeadTime(&htimBeep, &sBreakDeadTimeConfig) != HAL_OK) {
-        Error_Handler();
+        return;
     }
 }
 

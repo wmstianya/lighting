@@ -22,6 +22,8 @@ lighting_ultra\stm32f1xx_it.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal
 lighting_ultra\stm32f1xx_it.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_dma.h
 lighting_ultra\stm32f1xx_it.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_dma_ex.h
 lighting_ultra\stm32f1xx_it.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_cortex.h
+lighting_ultra\stm32f1xx_it.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_adc.h
+lighting_ultra\stm32f1xx_it.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_adc_ex.h
 lighting_ultra\stm32f1xx_it.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_flash.h
 lighting_ultra\stm32f1xx_it.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_flash_ex.h
 lighting_ultra\stm32f1xx_it.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_iwdg.h
@@ -30,8 +32,10 @@ lighting_ultra\stm32f1xx_it.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal
 lighting_ultra\stm32f1xx_it.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim_ex.h
 lighting_ultra\stm32f1xx_it.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_uart.h
 lighting_ultra\stm32f1xx_it.o: ../Core/Inc/stm32f1xx_it.h
-lighting_ultra\stm32f1xx_it.o: ../Core/Src/../../MDK-ARM/modbus_rtu_slave.h
-lighting_ultra\stm32f1xx_it.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\string.h
 lighting_ultra\stm32f1xx_it.o: ../Core/Inc/usart2_echo_test.h
+lighting_ultra\stm32f1xx_it.o: ../Core/Inc/usart1_echo_test.h
 lighting_ultra\stm32f1xx_it.o: ../Core/Inc/usart2_echo_test_debug.h
 lighting_ultra\stm32f1xx_it.o: ../Core/Inc/usart2_simple_test.h
+lighting_ultra\stm32f1xx_it.o: ../Core/Inc/app_config.h
+lighting_ultra\stm32f1xx_it.o: ../Core/Inc/modbus_port.h
+lighting_ultra\stm32f1xx_it.o: ../Core/Inc/modbus_rtu_core.h
