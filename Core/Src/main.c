@@ -2,19 +2,33 @@
  * @Author: Administrator wmstianya@gmail.com
  * @Date: 2025-08-20 15:21:11
  * @LastEditors: Administrator wmstianya@gmail.com
- * @LastEditTime: 2025-11-07 15:49:19
+ * @LastEditTime: 2025-11-12 15:20:08
  * @FilePath: \MDK-ARMe:\data\lighting_ultra\lighting_ultra\Core\Src\main.c
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
-/* main.c — STM32F103VCT6 + HAL + USART1 DMA + TIM2 + IDLE 检帧 + 快照式读 */
+/* main.c — STM32F103C8T6 + HAL + USART1 DMA + TIM2 + IDLE 检帧 + 快照式读 */
 #include "stm32f1xx_hal.h"
 #include "stm32f1xx_hal_tim.h"
-#include "../../MDK-ARM/modbus_rtu_slave.h"
 #include "usart2_echo_test.h"
 #include "usart2_echo_test_debug.h"
 #include "usart2_simple_test.h"
 #include "usart1_echo_test.h"
 #include "app_config.h"
+#include "relay.h"
+#include "beep.h"
+#include "led.h"
+#include "watchdog.h"
+#include "pressure_sensor.h"
+#include "water_level.h"
+#include "config_manager.h"
+#include "error_handler.h"
+#if RUN_MODE_ECHO_TEST == 10
+#include "modbus_app.h"  /* 模块化Modbus应用 */
+#include "lamp_manager.h" /* 场景引擎 + 模式仲裁 */
+#include "schedule.h"     /* 软 RTC + 时间段调度 */
+#else
+#include "../../MDK-ARM/modbus_rtu_slave.h"
+#endif
 
 /* 运行模式选择集中到 app_config.h */
 
@@ -29,8 +43,10 @@ DMA_HandleTypeDef  hdma_usart2_tx;
 // TIM_HandleTypeDef  htim2; // 暂时注释
 
 /* ---------------- 全局 Modbus 实例 ---------------- */
-ModbusRTU_Slave g_mb;   /* 绑定到 huart1 (USART1) */
-ModbusRTU_Slave g_mb2;  /* 绑定到 huart2 (USART2) */
+#if RUN_MODE_ECHO_TEST != 10
+ModbusRTU_Slave g_mb;   /* 绑定到 huart1 (USART1) - 旧版 */
+ModbusRTU_Slave g_mb2;  /* 绑定到 huart2 (USART2) - 旧版 */
+#endif
 
 
 
@@ -47,12 +63,17 @@ static void MX_USART2_UART_Init(void);  /* USART2: PA2/PA3 */
 /* ---------------- 用户写寄存器回调（示例：保持寄存器0 控制 LED） ---------------- */
 void ModbusRTU_PostWriteCallback(uint16_t addr, uint16_t value)
 {
+    #if RUN_MODE_ECHO_TEST != 10
     if (addr == 0) {
-        /* PB1 低电平点亮 */
+        /* PB1 低电平点亮 - 旧版Modbus模式才使用 */
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, (value > 0) ? GPIO_PIN_RESET : GPIO_PIN_SET);
     }
+    #else
+    /* 模块化模式下不使用此回调，由modbus_app.c中的回调处理 */
+    (void)addr;
+    (void)value;
+    #endif
 }
-
 /* ---------------- 主程序 ---------------- */
 int main(void)
 {
@@ -69,6 +90,28 @@ int main(void)
     /* 为了调试方便，两个串口的IDLE中断都启用 */
     __HAL_UART_ENABLE_IT(&huart1, UART_IT_IDLE);
     __HAL_UART_ENABLE_IT(&huart2, UART_IT_IDLE);
+    
+    /* 初始化配置管理模块（从Flash加载或使用默认配置） */
+    configManagerInit();
+    const SystemConfig_t* config = configGet();
+    
+    /* 初始化错误处理框架 */
+    errorHandlerInit();
+    
+    /* 初始化蜂鸣器驱动 */
+    beepInit();
+    
+    /* 初始化LED指示灯驱动 */
+    ledInit();
+    
+    /* 初始化外部看门狗驱动 */
+    watchdogInit();
+    
+    /* 初始化压力传感器（使用配置参数） */
+    pressureSensorInit(config->pressureMin, config->pressureMax);
+    
+    /* 初始化水位检测模块 */
+    waterLevelInit();
 
     #if RUN_MODE_ECHO_TEST == 0
         /* 仅在Modbus模式下初始化 */
@@ -93,7 +136,69 @@ int main(void)
         g_mb2.inputRegs[1]   = 6000;
     #endif
 
-    #if RUN_MODE_ECHO_TEST == 3
+    #if RUN_MODE_ECHO_TEST == 10
+        /* 模块化Modbus双串口模式 */
+
+        /* 场景引擎与调度器必须在 ModbusApp_Init 之前初始化：
+         * 因为 ModbusApp_Init 里 seedConfigMirror 会读取它们的默认状态 */
+        relayInit();
+        lampMgrInit();
+        scheduleInit();
+
+        /* 应用持久化的灯管/场景/调度配置 */
+        {
+            const SystemConfig_t *cfg = configGet();
+            for (uint8_t s = 0; s < REG_HOLD_SCENE_MASK_COUNT; s++) {
+                lampMgrSetSceneMask((uint8_t)(s + 1), cfg->sceneMasks[s]);
+            }
+            for (uint8_t i = 0; i < REG_HOLD_SCHEDULE_COUNT; i++) {
+                ScheduleEntry_t e;
+                e.startHHMM = cfg->scheduleEntries[i].startHHMM;
+                e.endHHMM   = cfg->scheduleEntries[i].endHHMM;
+                e.sceneId   = cfg->scheduleEntries[i].sceneId;
+                e.dowMask   = cfg->scheduleEntries[i].dowMask;
+                scheduleSetEntry(i, &e);
+            }
+            scheduleSetEnableMask(cfg->scheduleEnable);
+            lampMgrSetMode((LampMode_e)cfg->lampMode);
+        }
+
+        ModbusApp_Init();
+
+        /* 系统自检完成：蜂鸣器提示 */
+        beepSetTime(200);
+
+        while (1) {
+            ModbusApp_Process();  /* 处理两个串口的Modbus */
+
+            /* 灯管仲裁器周期处理（覆盖倒计时 + 应急维持） */
+            lampMgrProcess();
+
+            /* 调度器周期处理（1s tick + 1min RTC 推进） */
+            scheduleProcess();
+
+            /* 蜂鸣器定时处理（非阻塞式自动关闭） */
+            beepProcess();
+
+            /* 压力传感器采集处理（100ms自动采样） */
+            pressureSensorProcess();
+
+            /* 水位检测处理（50ms自动采样，带防抖） */
+            waterLevelProcess();
+
+            /* 定期更新传感器数据（示例） */
+            static uint32_t lastSensorUpdate = 0;
+            if (HAL_GetTick() - lastSensorUpdate > 1000) {
+                lastSensorUpdate = HAL_GetTick();
+                ModbusApp_UpdateSensorData();
+            }
+
+            /* 喂狗：外部看门狗TPS3823-33DBVR */
+            watchdogFeed();
+
+            HAL_Delay(1);
+        }
+    #elif RUN_MODE_ECHO_TEST == 3
         /* 简单测试模式 - 最基础版本 */
         usart2SimpleTestRun();
     #elif RUN_MODE_ECHO_TEST == 2
@@ -106,7 +211,7 @@ int main(void)
         /* USART1(PA9/PA10)回环测试模式 */
         usart1EchoTestRun();
     #else
-        /* Modbus双串口模式 */
+        /* 旧版Modbus双串口模式 */
         while (1) {
             ModbusRTU_Process(&g_mb);   /* 处理USART1 */
             ModbusRTU_Process(&g_mb2);  /* 处理USART2 */
@@ -155,32 +260,51 @@ static void MX_GPIO_Init(void)
 
     GPIO_InitTypeDef GPIO_InitStruct = {0};
 
-    /* PB1 LED */
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
-    GPIO_InitStruct.Pin   = GPIO_PIN_1;
-    GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
-    GPIO_InitStruct.Pull  = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+    /* LED1-LED4 (PB1/PB15/PB5/PB6)：由led.c模块初始化 */
+    
+    /* PB14 蜂鸣器：由beep.c模块初始化（TIM1_CH2N PWM） */
+    
+    /* PC14 外部看门狗：由watchdog.c模块初始化（TPS3823-33DBVR） */
 
     /* RS485 使能引脚配置 */
     __HAL_RCC_GPIOA_CLK_ENABLE();
     
-    /* USART2 RS485使能: PA4 */
-    HAL_GPIO_WritePin(MB_USART2_RS485_DE_GPIO_Port, MB_USART2_RS485_DE_Pin, GPIO_PIN_RESET);
-    GPIO_InitStruct.Pin   = MB_USART2_RS485_DE_Pin;
-    GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
-    GPIO_InitStruct.Pull  = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-    HAL_GPIO_Init(MB_USART2_RS485_DE_GPIO_Port, &GPIO_InitStruct);
-    
-    /* USART1 RS485使能: PA8 */
-    HAL_GPIO_WritePin(MB_USART1_RS485_DE_GPIO_Port, MB_USART1_RS485_DE_Pin, GPIO_PIN_RESET);
-    GPIO_InitStruct.Pin   = MB_USART1_RS485_DE_Pin;
-    GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
-    GPIO_InitStruct.Pull  = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-    HAL_GPIO_Init(MB_USART1_RS485_DE_GPIO_Port, &GPIO_InitStruct);
+    /* RS485 DE 引脚: 模块化模式下使用固定引脚，老模式使用宏 */
+    #if RUN_MODE_ECHO_TEST == 10
+      /* USART2: PA4 */
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
+      GPIO_InitStruct.Pin   = GPIO_PIN_4;
+      GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
+      GPIO_InitStruct.Pull  = GPIO_NOPULL;
+      GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+      HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+      
+      /* USART1: PA8 */
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_RESET);
+      GPIO_InitStruct.Pin   = GPIO_PIN_8;
+      GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
+      GPIO_InitStruct.Pull  = GPIO_NOPULL;
+      GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+      HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+    #else
+      /* USART2 RS485使能: 由旧版宏定义提供 */
+      HAL_GPIO_WritePin(MB_USART2_RS485_DE_GPIO_Port, MB_USART2_RS485_DE_Pin, GPIO_PIN_RESET);
+      GPIO_InitStruct.Pin   = MB_USART2_RS485_DE_Pin;
+      GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
+      GPIO_InitStruct.Pull  = GPIO_NOPULL;
+      GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+      HAL_GPIO_Init(MB_USART2_RS485_DE_GPIO_Port, &GPIO_InitStruct);
+      
+      /* USART1 RS485使能: 由旧版宏定义提供 */
+      HAL_GPIO_WritePin(MB_USART1_RS485_DE_GPIO_Port, MB_USART1_RS485_DE_Pin, GPIO_PIN_RESET);
+      GPIO_InitStruct.Pin   = MB_USART1_RS485_DE_Pin;
+      GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
+      GPIO_InitStruct.Pull  = GPIO_NOPULL;
+      GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+      HAL_GPIO_Init(MB_USART1_RS485_DE_GPIO_Port, &GPIO_InitStruct);
+    #endif
+
+
 }
 
 /* ---------------- DMA ---------------- */

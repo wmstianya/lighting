@@ -1,195 +1,209 @@
-# Modbus寄存器映射说明文档
+# Modbus 寄存器映射表
 
-## 📋 寄存器地址分配
+**版本：** v1.00（与 `modbus_reg_map.h` 的 `MODBUS_REG_MAP_VERSION` 对齐）
+**从机：** STM32F103C8T6 双 UART（UART1=0x01, UART2=0x02）
+**波特率：** 115200, 8N1
+**字节序：** Modbus 标准大端
 
-### **系统概览**
-- **设备类型**: 双通道Modbus RTU从设备
-- **从设备地址**: 可配置 (默认1和2)  
-- **波特率**: 115200 bps
-- **数据位**: 8位，无奇偶校验，1个停止位
-
-### **📊 寄存器映射表**
-
-| 寄存器地址 | 功能描述 | 数据类型 | 权限 | 备注 |
-|------------|----------|----------|------|------|
-| **0-2** | 系统预留区域 | uint16_t | 读/写 | 预留给系统扩展 |
-| **3** | 继电器1控制 | uint16_t | 读/写 | 0=关闭, 非0=开启 |
-| **4** | 继电器2控制 | uint16_t | 读/写 | 0=关闭, 非0=开启 |
-| **5** | 继电器3控制 | uint16_t | 读/写 | 0=关闭, 非0=开启 |
-| **6** | 继电器4控制 | uint16_t | 读/写 | 0=关闭, 非0=开启 |
-| **7** | 继电器5控制 | uint16_t | 读/写 | 0=关闭, 非0=开启 |
-| **8** | 继电器1状态反馈 | uint16_t | **只读** | 实时状态 0=关闭, 1=开启 |
-| **9** | 继电器2状态反馈 | uint16_t | **只读** | 实时状态 0=关闭, 1=开启 |
-| **10** | 继电器3状态反馈 | uint16_t | **只读** | 实时状态 0=关闭, 1=开启 |
-| **11** | 继电器4状态反馈 | uint16_t | **只读** | 实时状态 0=关闭, 1=开启 |
-| **12** | 继电器5状态反馈 | uint16_t | **只读** | 实时状态 0=关闭, 1=开启 |
-| **13-63** | 系统扩展区域 | uint16_t | 读/写 | 预留给未来功能 |
-
-### **🔌 继电器硬件映射**
-
-| 继电器编号 | 控制引脚 | 控制寄存器 | 状态寄存器 | 功能说明 |
-|------------|----------|------------|------------|----------|
-| **继电器1** | PB4 | 寄存器3 | 寄存器8 | 照明回路1 |
-| **继电器2** | PB3 | 寄存器4 | 寄存器9 | 照明回路2 |
-| **继电器3** | PA15 | 寄存器5 | 寄存器10 | 照明回路3 |
-| **继电器4** | PA12 | 寄存器6 | 寄存器11 | 照明回路4 |
-| **继电器5** | PA11 | 寄存器7 | 寄存器12 | 照明回路5 |
-
-## 💡 使用示例
-
-### **1. Python + pymodbus 示例**
-
-```python
-from pymodbus.client.sync import ModbusSerialClient
-
-# 连接Modbus设备
-client = ModbusSerialClient(
-    method='rtu', 
-    port='COM3',        # 根据实际情况修改
-    baudrate=115200,
-    bytesize=8,
-    parity='N',
-    stopbits=1,
-    timeout=1
-)
-
-client.connect()
-
-# 示例1：单独控制继电器
-def control_single_relay(relay_num, state):
-    """
-    控制单个继电器
-    relay_num: 1-5 (继电器编号)
-    state: True=开启, False=关闭
-    """
-    reg_addr = 2 + relay_num  # 寄存器3-7
-    value = 1 if state else 0
-    
-    result = client.write_register(reg_addr, value, unit=1)
-    if result.isError():
-        print(f"控制继电器{relay_num}失败")
-    else:
-        print(f"继电器{relay_num} {'开启' if state else '关闭'}成功")
-
-# 示例2：读取继电器状态
-def read_relay_status(relay_num):
-    """
-    读取单个继电器状态
-    relay_num: 1-5 (继电器编号)
-    """
-    reg_addr = 7 + relay_num  # 寄存器8-12
-    result = client.read_holding_registers(reg_addr, 1, unit=1)
-    
-    if result.isError():
-        print(f"读取继电器{relay_num}状态失败")
-        return None
-    else:
-        state = result.registers[0]
-        print(f"继电器{relay_num}状态: {'开启' if state else '关闭'}")
-        return state
-
-# 示例3：批量控制
-def batch_control_relays(states):
-    """
-    批量控制继电器
-    states: [继电器1状态, 继电器2状态, ..., 继电器5状态]
-    """
-    values = [1 if state else 0 for state in states]
-    result = client.write_registers(3, values, unit=1)
-    
-    if result.isError():
-        print("批量控制失败")
-    else:
-        print("批量控制成功")
-
-# 使用示例
-control_single_relay(1, True)   # 开启继电器1
-control_single_relay(3, False)  # 关闭继电器3
-
-read_relay_status(1)            # 读取继电器1状态
-
-# 开启继电器1,3,5，关闭继电器2,4
-batch_control_relays([True, False, True, False, True])
-
-client.close()
-```
-
-### **2. C语言示例（其他MCU作为主机）**
-
-```c
-#include "modbus_master.h"  // 假设你有Modbus主机库
-
-// 控制单个继电器
-HAL_StatusTypeDef controlRelay(uint8_t relayNum, bool state) {
-    uint16_t regAddr = 2 + relayNum;  // 寄存器3-7
-    uint16_t value = state ? 1 : 0;
-    
-    return modbus_write_single_register(1, regAddr, value);  // 从设备地址1
-}
-
-// 读取继电器状态
-HAL_StatusTypeDef readRelayStatus(uint8_t relayNum, bool* status) {
-    uint16_t regAddr = 7 + relayNum;  // 寄存器8-12
-    uint16_t value;
-    
-    HAL_StatusTypeDef result = modbus_read_holding_registers(1, regAddr, 1, &value);
-    if (result == HAL_OK) {
-        *status = (value != 0);
-    }
-    return result;
-}
-
-// 使用示例
-bool status;
-controlRelay(1, true);         // 开启继电器1
-readRelayStatus(1, &status);   // 读取继电器1状态
-```
-
-### **3. 组态软件配置示例**
-
-#### **MCGS/组态王配置**
-```
-设备类型: Modbus RTU
-从站地址: 1
-寄存器类型: 保持寄存器 (Holding Register)
-
-变量定义:
-- 继电器1_控制: 地址40004 (寄存器3+1)
-- 继电器1_状态: 地址40009 (寄存器8+1) 
-- 继电器2_控制: 地址40005 (寄存器4+1)
-- 继电器2_状态: 地址40010 (寄存器9+1)
-...以此类推
-```
-
-## ⚠️ 重要注意事项
-
-### **1. 寄存器特性**
-- **控制寄存器(3-7)**: 支持读写，写入0关闭继电器，写入非0开启继电器
-- **状态寄存器(8-12)**: 只读，返回继电器实际状态，尝试写入会返回异常
-
-### **2. 异常处理**
-- **0x02 (ILLEGAL_DATA_ADDRESS)**: 尝试写入只读的状态寄存器
-- **0x03 (ILLEGAL_DATA_VALUE)**: 继电器控制操作失败
-
-### **3. 建议使用方法**
-1. **控制继电器**: 写入控制寄存器 (3-7)
-2. **确认状态**: 读取状态寄存器 (8-12) 验证操作是否成功
-3. **故障诊断**: 如果控制寄存器写入成功但状态寄存器显示不一致，可能存在硬件故障
-
-### **4. 通信参数**
-- **从设备地址**: 通道1和通道2可以设置不同的从设备地址
-- **超时设置**: 建议设置至少100ms的通信超时
-- **重试机制**: 建议实现自动重试机制，最多重试3次
-
-## 🔧 调试工具推荐
-
-1. **Modbus Poll**: Windows下的Modbus调试工具
-2. **pymodbus**: Python命令行调试
-3. **ModbusMaster**: Android手机端调试工具
-4. **串口助手**: 查看原始通信数据
+本文档与 [`Core/Inc/modbus_reg_map.h`](../Inc/modbus_reg_map.h) 为"单一真值源"的 1:1 镜像。
 
 ---
 
-**文档版本**: v2.0.0  
-**更新日期**: 2025-01-20  
-**适用固件**: lighting_ultra v2.0.0+
+## 1. 控制模型概览
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ REG_HOLD_MODE                                                │
+│   0 = 手动模式     主机直控 DO / 场景                         │
+│   1 = 智能模式     内部调度器按时间段切场景                    │
+│   2 = 应急模式     强制 SCENE_ALL_ON，任何请求被忽略          │
+└─────────────────────────────────────────────────────────────┘
+           ↓                    ↓                    ↓
+  线圈 0~4 直写         REG_HOLD_SCENE_REQ      schedule.c tick
+  REG_HOLD_LAMP_BITS_RW        ↓                       ↓
+           └────────────────────┴───────────────────────┘
+                               ↓
+                      lamp_manager 仲裁
+                               ↓
+                      relay.c (DO1~DO5)
+```
+
+---
+
+## 2. 保持寄存器 (Holding Registers, FC 03/06/10)
+
+### 2.1 模式与直接控制区 `0x0000~0x000F`
+
+| 地址     | 符号                   | 读/写 | 说明 |
+|----------|------------------------|-------|------|
+| `0x0000` | `REG_HOLD_MODE`        | R/W   | 0=手动, 1=智能, 2=应急 |
+| `0x0001` | `REG_HOLD_LAMP_BITS_RW`| R/W   | bit0~4 = DO1~DO5；**仅手动模式下写入生效** |
+| `0x0002` | `REG_HOLD_SCENE_REQ`   | R/W   | 写入 1~5 立即切换场景（手动模式允许，智能模式被拒） |
+| `0x0003` | `REG_HOLD_OVERRIDE_SEC`| R/W   | 智能模式下手动临时接管秒数（0=禁用，建议 0~3600） |
+
+### 2.2 场景定义区 `0x0010~0x0014`
+
+| 地址     | 符号                       | 默认值 | 说明 |
+|----------|----------------------------|--------|------|
+| `0x0010` | `REG_HOLD_SCENE_MASK[1]`   | 0x1F   | 场景 1 "全开" DO 位掩码 |
+| `0x0011` | `REG_HOLD_SCENE_MASK[2]`   | 0x15   | 场景 2 "半开节能" |
+| `0x0012` | `REG_HOLD_SCENE_MASK[3]`   | 0x01   | 场景 3 "仅主灯" |
+| `0x0013` | `REG_HOLD_SCENE_MASK[4]`   | 0x18   | 场景 4 "应急仅备用" |
+| `0x0014` | `REG_HOLD_SCENE_MASK[5]`   | 0x00   | 场景 5 "全关" |
+
+场景掩码可由主机重定义，`REG_HOLD_CMD=1` 保存到 Flash。
+
+### 2.3 时间与调度区 `0x0020~0x0050`
+
+| 地址     | 符号                       | 说明 |
+|----------|----------------------------|------|
+| `0x0020` | `REG_HOLD_TIME_HHMM`       | 当前时间 = 小时×100 + 分钟（如 1435 表示 14:35）；写入=授时 |
+| `0x0021` | `REG_HOLD_TIME_DOW`        | 星期（0=周日, 1=周一, ..., 6=周六） |
+| `0x0030` | `REG_HOLD_SCHEDULE[0].start` | 段 0 起始 HHMM |
+| `0x0031` | `REG_HOLD_SCHEDULE[0].end`   | 段 0 结束 HHMM |
+| `0x0032` | `REG_HOLD_SCHEDULE[0].sceneId` | 段 0 场景 ID (1~5) |
+| `0x0033` | `REG_HOLD_SCHEDULE[0].dowMask` | 段 0 星期掩码 |
+| `0x0034~0x004F` | `REG_HOLD_SCHEDULE[1~7]` | 段 1~7，结构同上 |
+| `0x0050` | `REG_HOLD_SCHEDULE_ENABLE` | bit0~7 对应段 0~7 的使能标志 |
+
+**DOW 掩码位定义：**
+
+| bit | 含义 |
+|-----|------|
+| 0 | 周日 |
+| 1 | 周一 |
+| 2 | 周二 |
+| 3 | 周三 |
+| 4 | 周四 |
+| 5 | 周五 |
+| 6 | 周六 |
+| 7 | 置 1 = 忽略星期（每天生效） |
+
+**跨日时段处理：** 若 `end < start`（如 22:00→06:00），视为跨零点，命中区间为 `[start, 23:59] ∪ [00:00, end]`。
+
+### 2.4 通信配置区 `0x0060~0x006F`
+
+| 地址     | 符号                     | 说明 |
+|----------|--------------------------|------|
+| `0x0060` | `REG_HOLD_SLAVE_ADDR`    | 从站地址 1~247，写入后持久化 |
+| `0x0061` | `REG_HOLD_BAUD_INDEX`    | 波特率档位（0=9600, 1=19200, 2=38400, 3=57600, 4=115200） |
+
+### 2.5 命令寄存器 `0x00F0`
+
+| 写入值 | 命令 |
+|--------|------|
+| 1 | 保存当前配置到 Flash |
+| 2 | 恢复出厂设置（重启生效） |
+| 3 | 场景自检（依次激活 5 个场景 500ms） |
+
+---
+
+## 3. 输入寄存器 (Input Registers, FC 04) — 只读
+
+| 地址     | 符号                           | 说明 |
+|----------|--------------------------------|------|
+| `0x0000` | `REG_INPUT_HEARTBEAT`          | 每秒 +1 的心跳计数 |
+| `0x0001` | `REG_INPUT_PRESSURE_X1000`     | 压力 × 1000（单位 0.001 MPa） |
+| `0x0002` | `REG_INPUT_CURRENT_X100`       | 电流 × 100（单位 0.01 mA） |
+| `0x0003` | `REG_INPUT_ADC_RAW`            | 压力 ADC 原始值（0~4095） |
+| `0x0004` | `REG_INPUT_PRESSURE_VALID`     | 压力数据是否有效（0/1） |
+| `0x0005` | `REG_INPUT_WATER_LEVEL`        | 水位等级：0=无水, 1=低, 2=中, 3=高, 0xFF=错误 |
+| `0x0006` | `REG_INPUT_ACTIVE_SCENE`       | 当前生效场景（0=无，1~5） |
+| `0x0007` | `REG_INPUT_ACTIVE_MODE`        | 当前生效模式（镜像验证用） |
+| `0x0008` | `REG_INPUT_SCHEDULE_HIT`       | 命中的调度段序号（0xFF=未命中） |
+| `0x0009` | `REG_INPUT_LAMP_BITS_ACTUAL`   | DO 实际位图（从硬件回读） |
+| `0x000A` | `REG_INPUT_OVERRIDE_LEFT_SEC`  | 临时覆盖剩余秒数 |
+| `0x000B` | `REG_INPUT_TIME_SYNCED`        | 软 RTC 是否已同步（0=未授时） |
+| `0x0010` | `REG_INPUT_ERR_LO`             | 错误位掩码低 16 位 |
+| `0x0011` | `REG_INPUT_ERR_HI`             | 错误位掩码高 16 位 |
+| `0x0012` | `REG_INPUT_RX_FRAME_CNT`       | Modbus 接收帧计数 |
+| `0x0013` | `REG_INPUT_CRC_ERR_CNT`        | Modbus CRC 错误计数 |
+| `0x001F` | `REG_INPUT_MAP_VERSION`        | 寄存器表版本（当前 0x0100） |
+
+---
+
+## 4. 线圈 (Coils, FC 01/05/0F)
+
+| 地址 | 符号                | 说明 |
+|------|---------------------|------|
+| 0    | DO1                 | 灯管 1（仅手动模式写入生效） |
+| 1    | DO2                 | 灯管 2 |
+| 2    | DO3                 | 灯管 3 |
+| 3    | DO4                 | 灯管 4 |
+| 4    | DO5                 | 灯管 5 |
+| 5    | `COIL_BEEP_ONCE`    | 写 1 触发 200ms 蜂鸣 |
+| 6    | `COIL_FACTORY_RESET`| 写 1 恢复出厂设置 |
+
+智能模式下对线圈 0~4 的写入会被拒绝，`REG_INPUT_CRC_ERR_CNT` 不变，但内部错误计数 +1 可在诊断中观察。
+
+---
+
+## 5. 离散输入 (Discrete Inputs, FC 02) — 只读位
+
+| 位地址 | 字节.位 | 说明 |
+|--------|---------|------|
+| 0      | byte0.0 | 压力数据有效 |
+| 1      | byte0.1 | 压力 > 1.0 MPa |
+| 2      | byte0.2 | 压力 > 1.4 MPa（报警） |
+| 8      | byte1.0 | 低水位探针有水（DI1=0） |
+| 9      | byte1.1 | 中水位探针有水（DI2=0） |
+| 10     | byte1.2 | 高水位探针有水（DI3=0） |
+| 16~23  | byte2   | 水位编码 bit0~2 + 稳定标志 bit7 |
+| 24     | byte3.0 | 智能模式生效中 |
+| 25     | byte3.1 | 当前调度段命中中 |
+| 26     | byte3.2 | 手动临时覆盖生效中 |
+| 27     | byte3.3 | 应急模式生效中 |
+
+---
+
+## 6. 典型使用场景示例
+
+### 6.1 手动全开所有灯（推荐用场景请求）
+
+```
+写 0x0000 = 0           ← 切到手动模式
+写 0x0002 = 1           ← 场景 1 "全开"
+```
+
+### 6.2 手动点亮灯 1 和灯 3（位掩码）
+
+```
+写 0x0000 = 0           ← 手动模式
+写 0x0001 = 0x05        ← bit0 | bit2
+```
+
+### 6.3 配置并启用智能模式（时间调度）
+
+```
+写 0x0020 = 1435        ← 授时 14:35
+写 0x0021 = 3           ← 周三
+
+写 0x0030 = 1800        ← 段 0 起始 18:00
+写 0x0031 = 2200        ← 段 0 结束 22:00
+写 0x0032 = 1           ← 场景 1 "全开"
+写 0x0033 = 0x80        ← 忽略星期
+
+写 0x0034 = 2200        ← 段 1 起始 22:00
+写 0x0035 = 600         ← 段 1 结束 06:00（跨日）
+写 0x0036 = 2           ← 场景 2 "半开节能"
+写 0x0037 = 0x80
+
+写 0x0050 = 0x03        ← 使能段 0 和段 1
+写 0x00F0 = 1           ← 保存到 Flash
+写 0x0000 = 1           ← 切到智能模式
+```
+
+### 6.4 主机轮询运行状态
+
+```
+读 0x0006~0x000B (Input)   ← 当前场景/模式/调度命中/实际 DO/覆盖剩余/时间同步
+读 0x0000~0x0003 (Input)   ← 心跳 + 压力 + 电流 + ADC
+```
+
+---
+
+## 7. 兼容性与版本
+
+- 读 `REG_INPUT_MAP_VERSION` (Input 0x001F) 获取寄存器表版本。
+- 主版本号变化 (高字节) = 不兼容变更；次版本号 = 向后兼容新增。
+- 当前版本 `0x0100` = v1.00。

@@ -33,6 +33,11 @@ MDK-ARM/.vscode/**
 **/*.log
 **/*.log.lock
 
+# GCC / CMake build output
+build/
+*.elf
+*.bin
+
 # Python cache (tools/tests)
 **/__pycache__/
 **/*.pyc
@@ -40,5 +45,4 @@ MDK-ARM/.vscode/**
 # OS junk
 .DS_Store
 Thumbs.db
-
 

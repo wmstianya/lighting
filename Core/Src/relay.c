@@ -55,27 +55,30 @@ static void setGpioState(RelayConfig_t* config, RelayState_e state);
 //=============================================================================
 // 3. 公共API函数实现 (Public API Implementations)
 //=============================================================================
-
 HAL_StatusTypeDef relayInit(void)
 {
+    // 确保GPIO时钟就绪（不依赖外部调用）
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+    __HAL_RCC_AFIO_CLK_ENABLE();
+    __HAL_AFIO_REMAP_SWJ_NOJTAG();
+
     GPIO_InitTypeDef GPIO_InitStruct = {0};
-    
-    // 配置所有继电器引脚为推挽输出
-    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-    
-    // 初始化每个继电器引脚
+
+    // 原先设置：推挽输出 + 高速
+    GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull  = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+
     for (int i = 0; i < RELAY_CHANNEL_COUNT; i++)
     {
         GPIO_InitStruct.Pin = relayConfigs[i].pin;
         HAL_GPIO_Init(relayConfigs[i].port, &GPIO_InitStruct);
-        
-        // 设置为默认关闭状态
+
         setGpioState(&relayConfigs[i], RELAY_STATE_OFF);
         relayConfigs[i].currentState = RELAY_STATE_OFF;
     }
-    
+
     return HAL_OK;
 }
 
@@ -166,6 +169,7 @@ static bool isValidChannel(RelayChannel_e channel)
 
 static void setGpioState(RelayConfig_t* config, RelayState_e state)
 {
+    /* 高电平有效：ON -> 3.3V，OFF -> 0V */
     GPIO_PinState pinState = (state == RELAY_STATE_ON) ? 
                             GPIO_PIN_SET : GPIO_PIN_RESET;
     HAL_GPIO_WritePin(config->port, config->pin, pinState);
