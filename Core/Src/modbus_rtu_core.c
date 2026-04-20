@@ -155,6 +155,41 @@ static uint16_t modbusHandleReadCoils(ModbusRTU_t *mb, uint8_t *frame)
     return 3 + byteCount + 2;
 }
 
+static uint16_t modbusHandleReadDiscreteInputs(ModbusRTU_t *mb, uint8_t *frame)
+{
+    uint16_t startAddr = (frame[2] << 8) | frame[3];
+    uint16_t inputCount = (frame[4] << 8) | frame[5];
+    uint8_t byteCount;
+    uint16_t i;
+
+    if (!mb->discreteInputs || startAddr >= mb->discreteCount ||
+        (startAddr + inputCount) > mb->discreteCount ||
+        inputCount == 0 || inputCount > 2000) {
+        modbusSendException(mb, MODBUS_FC_READ_DISCRETE_INPUTS, MODBUS_EX_ILLEGAL_DATA_ADDRESS);
+        return 0;
+    }
+
+    mb->txBuffer[0] = mb->slaveAddr;
+    mb->txBuffer[1] = MODBUS_FC_READ_DISCRETE_INPUTS;
+    byteCount = (inputCount + 7) / 8;
+    mb->txBuffer[2] = byteCount;
+
+    for (i = 0; i < byteCount; i++) {
+        mb->txBuffer[3 + i] = 0;
+    }
+
+    for (i = 0; i < inputCount; i++) {
+        if (modbusGetBit(mb->discreteInputs, startAddr + i)) {
+            uint8_t byteIndex = i / 8;
+            uint8_t bitIndex = i % 8;
+            mb->txBuffer[3 + byteIndex] |= (1 << bitIndex);
+        }
+    }
+
+    modbusAddCrc(mb->txBuffer, 3 + byteCount);
+    return 3 + byteCount + 2;
+}
+
 static uint16_t modbusHandleReadHoldingRegs(ModbusRTU_t *mb, uint8_t *frame)
 {
     uint16_t startAddr = (frame[2] << 8) | frame[3];
@@ -262,6 +297,43 @@ static uint16_t modbusHandleWriteSingleReg(ModbusRTU_t *mb, uint8_t *frame)
     return 8;
 }
 
+static uint16_t modbusHandleWriteMultipleCoils(ModbusRTU_t *mb, uint8_t *frame)
+{
+    uint16_t startAddr = (frame[2] << 8) | frame[3];
+    uint16_t coilCount = (frame[4] << 8) | frame[5];
+    uint8_t byteCount = frame[6];
+    uint16_t i;
+
+    if (!mb->coils || startAddr >= mb->coilCount ||
+        (startAddr + coilCount) > mb->coilCount ||
+        coilCount == 0 || coilCount > 1968 ||
+        byteCount != ((coilCount + 7) / 8)) {
+        modbusSendException(mb, MODBUS_FC_WRITE_MULTIPLE_COILS, MODBUS_EX_ILLEGAL_DATA_ADDRESS);
+        return 0;
+    }
+
+    for (i = 0; i < coilCount; i++) {
+        uint8_t srcByte = 7 + (i / 8);
+        uint8_t srcBit = i % 8;
+        uint8_t bitValue = (frame[srcByte] >> srcBit) & 0x01;
+
+        modbusSetBit(mb->coils, startAddr + i, bitValue);
+
+        if (mb->onCoilChanged) {
+            mb->onCoilChanged(startAddr + i, bitValue);
+        }
+    }
+
+    mb->txBuffer[0] = mb->slaveAddr;
+    mb->txBuffer[1] = MODBUS_FC_WRITE_MULTIPLE_COILS;
+    mb->txBuffer[2] = frame[2];
+    mb->txBuffer[3] = frame[3];
+    mb->txBuffer[4] = frame[4];
+    mb->txBuffer[5] = frame[5];
+    modbusAddCrc(mb->txBuffer, 6);
+    return 8;
+}
+
 static uint16_t modbusHandleWriteMultipleRegs(ModbusRTU_t *mb, uint8_t *frame)
 {
     uint16_t startAddr = (frame[2] << 8) | frame[3];
@@ -328,7 +400,11 @@ static void modbusProcessFrame(ModbusRTU_t *mb)
         case MODBUS_FC_READ_COILS:
             txLen = modbusHandleReadCoils(mb, mb->rxBuffer);
             break;
-            
+
+        case MODBUS_FC_READ_DISCRETE_INPUTS:
+            txLen = modbusHandleReadDiscreteInputs(mb, mb->rxBuffer);
+            break;
+
         case MODBUS_FC_READ_HOLDING_REGS:
             txLen = modbusHandleReadHoldingRegs(mb, mb->rxBuffer);
             break;
@@ -344,7 +420,11 @@ static void modbusProcessFrame(ModbusRTU_t *mb)
         case MODBUS_FC_WRITE_SINGLE_REG:
             txLen = modbusHandleWriteSingleReg(mb, mb->rxBuffer);
             break;
-            
+
+        case MODBUS_FC_WRITE_MULTIPLE_COILS:
+            txLen = modbusHandleWriteMultipleCoils(mb, mb->rxBuffer);
+            break;
+
         case MODBUS_FC_WRITE_MULTIPLE_REGS:
             txLen = modbusHandleWriteMultipleRegs(mb, mb->rxBuffer);
             break;

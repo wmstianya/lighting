@@ -1,9 +1,13 @@
 /**
  * @file pressure_sensor.h
  * @brief 压力传感器驱动模块头文件
- * @details 4-20mA压力变送器采集与处理（带卡尔曼滤波）
+ * @details 4-20mA压力变送器采集与处理（支持多种滤波算法）
  * @author Lighting Ultra Team
  * @date 2025-11-11
+ * 
+ * 修订历史：
+ * - 2025-11-11: 初始版本，使用卡尔曼滤波
+ * - 2025-11-13: 添加中值滤波+IIR滤波混合方案，支持宏切换
  * 
  * 硬件连接：
  * - PB0 -> ADC12_IN8 -> 4-20mA采样电阻(140Ω) -> 压力变送器
@@ -12,7 +16,7 @@
  * - 4mA  -> 0.56V   -> 压力下限（如0 MPa）
  * - 20mA -> 2.8V   -> 压力上限（如1.6 MPa）
  * - ADC采样 -> 电压值 -> 电流值 -> 压力值
- * - 卡尔曼滤波平滑数据
+ * - 可选滤波算法平滑数据
  */
 
 #ifndef PRESSURE_SENSOR_H
@@ -22,6 +26,57 @@
 #include <stdbool.h>
 #include "stm32f1xx_hal.h"
 #include "kalman.h"
+#include "filter.h"
+
+/* ==================== 滤波算法选择 ==================== */
+/**
+ * @brief 滤波算法选择宏定义
+ * @details 通过修改此宏定义切换不同的滤波算法
+ * 
+ * 可选值：
+ * - FILTER_TYPE_KALMAN          : 卡尔曼滤波（理论最优，参数调整复杂）
+ * - FILTER_TYPE_MEDIAN_IIR      : 中值滤波+IIR滤波混合方案（推荐，抗干扰强）
+ * - FILTER_TYPE_IIR_ONLY        : 仅IIR滤波（计算最简单，内存占用最小）
+ * 
+ * 算法对比：
+ * ┌─────────────────┬──────────┬─────────┬──────┬─────────┬─────────┬─────────┐
+ * │ 算法             │ 内存占用  │ 计算量   │ 延迟  │ 参数调整 │ 噪声抑制 │ 脉冲抑制 │
+ * ├─────────────────┼──────────┼─────────┼──────┼─────────┼─────────┼─────────┤
+ * │ 卡尔曼滤波       │ 20字节   │ 中      │ 中   │ 困难     │ 好      │ 差      │
+ * │ 中值+IIR混合     │ 28字节   │ 大      │ 中   │ 容易     │ 很好    │ 最好    │
+ * │ 仅IIR滤波        │ 8字节    │ 最小    │ 小   │ 最容易   │ 好      │ 差      │
+ * └─────────────────┴──────────┴─────────┴──────┴─────────┴─────────┴─────────┘
+ * 
+ * 使用建议：
+ * - 现场电磁干扰小、需要理论最优 -> FILTER_TYPE_KALMAN
+ * - 工业现场、电磁干扰严重       -> FILTER_TYPE_MEDIAN_IIR（推荐）
+ * - 追求极简、内存受限           -> FILTER_TYPE_IIR_ONLY
+ */
+#define FILTER_TYPE_KALMAN          1    /**< 卡尔曼滤波 */
+#define FILTER_TYPE_MEDIAN_IIR      2    /**< 中值滤波+IIR滤波混合 */
+#define FILTER_TYPE_IIR_ONLY        3    /**< 仅IIR滤波 */
+
+/* 当前使用的滤波算法（修改此行切换算法） */
+#define PRESSURE_FILTER_TYPE        FILTER_TYPE_MEDIAN_IIR
+
+/* ==================== 滤波参数配置 ==================== */
+#if (PRESSURE_FILTER_TYPE == FILTER_TYPE_KALMAN)
+    /* 卡尔曼滤波器参数 */
+    #define KALMAN_PROCESS_NOISE    0.005f   /**< 过程噪声Q */
+    #define KALMAN_MEASURE_NOISE    0.5f     /**< 测量噪声R */
+    #define KALMAN_ESTIMATE_ERROR   1.0f     /**< 初始估计误差P */
+
+#elif (PRESSURE_FILTER_TYPE == FILTER_TYPE_MEDIAN_IIR)
+    /* 中值滤波+IIR滤波参数 */
+    #define IIR_ALPHA               0.3f     /**< IIR平滑系数（0.1~0.5） */
+
+#elif (PRESSURE_FILTER_TYPE == FILTER_TYPE_IIR_ONLY)
+    /* 仅IIR滤波参数 */
+    #define IIR_ALPHA               0.25f    /**< IIR平滑系数（0.1~0.5） */
+
+#else
+    #error "Invalid PRESSURE_FILTER_TYPE! Must be 1, 2, or 3."
+#endif
 
 /* ==================== 硬件配置 ==================== */
 #define PRESSURE_ADC_INSTANCE       ADC1
@@ -37,8 +92,8 @@
 #define SAMPLE_RESISTOR_OHM         140.0f    /* 采样电阻140Ω */
 
 /* 电压范围：4mA*140Ω=0.56V, 20mA*140Ω=2.8V（但受ADC Vref限制） */
-#define VOLTAGE_MIN                 1.0f      /* 对应4mA */
-#define VOLTAGE_MAX                 3.3f      /* ADC最大电压 */
+#define VOLTAGE_MIN                 0.56f      /* 对应4mA */
+#define VOLTAGE_MAX                 2.8f      /* ADC最大电压 */
 
 /* 采样配置 */
 #define PRESSURE_SAMPLE_INTERVAL_MS 100       /* 采样间隔100ms */

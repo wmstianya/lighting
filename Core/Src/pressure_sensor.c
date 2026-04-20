@@ -1,9 +1,13 @@
 /**
  * @file pressure_sensor.c
  * @brief 压力传感器驱动模块实现
- * @details 4-20mA压力变送器ADC采集与卡尔曼滤波处理
+ * @details 4-20mA压力变送器ADC采集与多种滤波算法处理
  * @author Lighting Ultra Team
  * @date 2025-11-11
+ * 
+ * 修订历史：
+ * - 2025-11-11: 初始版本，使用卡尔曼滤波
+ * - 2025-11-13: 添加中值滤波+IIR滤波混合方案，支持宏切换
  */
 
 #include "pressure_sensor.h"
@@ -14,8 +18,20 @@
 ADC_HandleTypeDef hadcPressure;
 static PressureConfig_t pressureConfig;
 static PressureData_t pressureData;
-static KalmanFilter_t kalmanFilter;
 static uint32_t lastSampleTick = 0;
+
+/* 根据宏定义选择不同的滤波器 */
+#if (PRESSURE_FILTER_TYPE == FILTER_TYPE_KALMAN)
+    static KalmanFilter_t kalmanFilter;
+
+#elif (PRESSURE_FILTER_TYPE == FILTER_TYPE_MEDIAN_IIR)
+    static MedianFilter_t medianFilter;
+    static IirFilter_t iirFilter;
+
+#elif (PRESSURE_FILTER_TYPE == FILTER_TYPE_IIR_ONLY)
+    static IirFilter_t iirFilter;
+
+#endif
 
 /* ==================== 私有函数 ==================== */
 /**
@@ -143,14 +159,24 @@ HAL_StatusTypeDef pressureSensorInit(float pressureMin, float pressureMax)
         return HAL_ERROR;
     }
     
-    /* 初始化卡尔曼滤波器
-     * 参数说明：
-     * - processNoise = 0.005：过程噪声，压力变化较慢
-     * - measureNoise = 0.5：测量噪声，ADC噪声较大
-     * - estimateError = 1.0：初始估计误差
-     * - initialValue = pressureMin：初始压力值
-     */
-    kalmanInit(&kalmanFilter, 0.005f, 0.5f, 1.0f, pressureMin);
+    /* 根据宏定义初始化相应的滤波器 */
+#if (PRESSURE_FILTER_TYPE == FILTER_TYPE_KALMAN)
+    /* 初始化卡尔曼滤波器 */
+    kalmanInit(&kalmanFilter, KALMAN_PROCESS_NOISE, KALMAN_MEASURE_NOISE, 
+               KALMAN_ESTIMATE_ERROR, pressureMin);
+
+#elif (PRESSURE_FILTER_TYPE == FILTER_TYPE_MEDIAN_IIR)
+    /* 初始化中值滤波器 */
+    medianFilterInit(&medianFilter);
+    
+    /* 初始化IIR滤波器 */
+    iirFilterInit(&iirFilter, IIR_ALPHA, pressureMin);
+
+#elif (PRESSURE_FILTER_TYPE == FILTER_TYPE_IIR_ONLY)
+    /* 初始化IIR滤波器 */
+    iirFilterInit(&iirFilter, IIR_ALPHA, pressureMin);
+
+#endif
     
     /* 初始化时间戳 */
     lastSampleTick = HAL_GetTick();
@@ -207,8 +233,26 @@ HAL_StatusTypeDef pressureSensorSample(void)
         /* 电流 -> 压力（原始值） */
         pressureData.pressureRaw = currentToPressure(pressureData.current);
         
+        /* 根据宏定义使用不同的滤波算法 */
+#if (PRESSURE_FILTER_TYPE == FILTER_TYPE_KALMAN)
         /* 卡尔曼滤波 */
-        pressureData.pressureFiltered = kalmanUpdate(&kalmanFilter, pressureData.pressureRaw);
+        pressureData.pressureFiltered = kalmanUpdate(&kalmanFilter, 
+                                                     pressureData.pressureRaw);
+
+#elif (PRESSURE_FILTER_TYPE == FILTER_TYPE_MEDIAN_IIR)
+        /* 第1步：中值滤波去除脉冲噪声 */
+        float medianValue = medianFilterUpdate(&medianFilter, 
+                                               pressureData.pressureRaw);
+        
+        /* 第2步：IIR滤波平滑数据 */
+        pressureData.pressureFiltered = iirFilterUpdate(&iirFilter, medianValue);
+
+#elif (PRESSURE_FILTER_TYPE == FILTER_TYPE_IIR_ONLY)
+        /* IIR滤波 */
+        pressureData.pressureFiltered = iirFilterUpdate(&iirFilter, 
+                                                        pressureData.pressureRaw);
+
+#endif
         
         /* 清除传感器故障错误 */
         errorClear(ERROR_PRESSURE_SENSOR_FAULT);
@@ -256,7 +300,23 @@ bool pressureSensorIsValid(void)
 
 void pressureSensorResetFilter(void)
 {
+#if (PRESSURE_FILTER_TYPE == FILTER_TYPE_KALMAN)
+    /* 重置卡尔曼滤波器 */
     kalmanReset(&kalmanFilter);
-    kalmanInit(&kalmanFilter, 0.005f, 0.5f, 1.0f, pressureConfig.pressureMin);
+    kalmanInit(&kalmanFilter, KALMAN_PROCESS_NOISE, KALMAN_MEASURE_NOISE,
+               KALMAN_ESTIMATE_ERROR, pressureConfig.pressureMin);
+
+#elif (PRESSURE_FILTER_TYPE == FILTER_TYPE_MEDIAN_IIR)
+    /* 重置中值滤波器和IIR滤波器 */
+    medianFilterReset(&medianFilter);
+    iirFilterReset(&iirFilter);
+    iirFilterInit(&iirFilter, IIR_ALPHA, pressureConfig.pressureMin);
+
+#elif (PRESSURE_FILTER_TYPE == FILTER_TYPE_IIR_ONLY)
+    /* 重置IIR滤波器 */
+    iirFilterReset(&iirFilter);
+    iirFilterInit(&iirFilter, IIR_ALPHA, pressureConfig.pressureMin);
+
+#endif
 }
 

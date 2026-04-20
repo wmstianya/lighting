@@ -455,6 +455,11 @@
               <FilePath>../Core/Src/kalman.c</FilePath>
             </File>
             <File>
+              <FileName>filter.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/filter.c</FilePath>
+            </File>
+            <File>
               <FileName>pressure_sensor.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Core/Src/pressure_sensor.c</FilePath>

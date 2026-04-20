@@ -2,7 +2,7 @@
  * @Author: Administrator wmstianya@gmail.com
  * @Date: 2025-08-20 15:21:11
  * @LastEditors: Administrator wmstianya@gmail.com
- * @LastEditTime: 2025-11-11 16:04:04
+ * @LastEditTime: 2025-11-12 15:20:08
  * @FilePath: \MDK-ARMe:\data\lighting_ultra\lighting_ultra\Core\Src\main.c
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
@@ -24,6 +24,8 @@
 #include "error_handler.h"
 #if RUN_MODE_ECHO_TEST == 10
 #include "modbus_app.h"  /* 模块化Modbus应用 */
+#include "lamp_manager.h" /* 场景引擎 + 模式仲裁 */
+#include "schedule.h"     /* 软 RTC + 时间段调度 */
 #else
 #include "../../MDK-ARM/modbus_rtu_slave.h"
 #endif
@@ -136,33 +138,64 @@ int main(void)
 
     #if RUN_MODE_ECHO_TEST == 10
         /* 模块化Modbus双串口模式 */
+
+        /* 场景引擎与调度器必须在 ModbusApp_Init 之前初始化：
+         * 因为 ModbusApp_Init 里 seedConfigMirror 会读取它们的默认状态 */
+        relayInit();
+        lampMgrInit();
+        scheduleInit();
+
+        /* 应用持久化的灯管/场景/调度配置 */
+        {
+            const SystemConfig_t *cfg = configGet();
+            for (uint8_t s = 0; s < REG_HOLD_SCENE_MASK_COUNT; s++) {
+                lampMgrSetSceneMask((uint8_t)(s + 1), cfg->sceneMasks[s]);
+            }
+            for (uint8_t i = 0; i < REG_HOLD_SCHEDULE_COUNT; i++) {
+                ScheduleEntry_t e;
+                e.startHHMM = cfg->scheduleEntries[i].startHHMM;
+                e.endHHMM   = cfg->scheduleEntries[i].endHHMM;
+                e.sceneId   = cfg->scheduleEntries[i].sceneId;
+                e.dowMask   = cfg->scheduleEntries[i].dowMask;
+                scheduleSetEntry(i, &e);
+            }
+            scheduleSetEnableMask(cfg->scheduleEnable);
+            lampMgrSetMode((LampMode_e)cfg->lampMode);
+        }
+
         ModbusApp_Init();
-        
+
         /* 系统自检完成：蜂鸣器提示 */
         beepSetTime(200);
-        
+
         while (1) {
             ModbusApp_Process();  /* 处理两个串口的Modbus */
-            
+
+            /* 灯管仲裁器周期处理（覆盖倒计时 + 应急维持） */
+            lampMgrProcess();
+
+            /* 调度器周期处理（1s tick + 1min RTC 推进） */
+            scheduleProcess();
+
             /* 蜂鸣器定时处理（非阻塞式自动关闭） */
             beepProcess();
-            
+
             /* 压力传感器采集处理（100ms自动采样） */
             pressureSensorProcess();
-            
+
             /* 水位检测处理（50ms自动采样，带防抖） */
             waterLevelProcess();
-            
+
             /* 定期更新传感器数据（示例） */
             static uint32_t lastSensorUpdate = 0;
             if (HAL_GetTick() - lastSensorUpdate > 1000) {
                 lastSensorUpdate = HAL_GetTick();
                 ModbusApp_UpdateSensorData();
             }
-            
+
             /* 喂狗：外部看门狗TPS3823-33DBVR */
             watchdogFeed();
-            
+
             HAL_Delay(1);
         }
     #elif RUN_MODE_ECHO_TEST == 3

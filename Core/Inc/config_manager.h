@@ -17,6 +17,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "stm32f1xx_hal.h"
+#include "modbus_reg_map.h"
 
 /* ==================== 功能开关 ==================== */
 /**
@@ -29,7 +30,7 @@
 #define CONFIG_FLASH_PAGE_SIZE      2048        /* STM32F103 Flash页大小2KB */
 #define CONFIG_FLASH_BASE_ADDR      0x0800F800  /* C8T6最后一页地址（64KB） */
 #define CONFIG_MAGIC_NUMBER         0x4C544C55  /* "LTLU" ASCII码 */
-#define CONFIG_VERSION              0x0100      /* 版本1.0 */
+#define CONFIG_VERSION              0x0200      /* 版本2.0：新增灯管场景+调度持久化 */
 
 /* ==================== 系统配置结构体 ==================== */
 /**
@@ -67,7 +68,21 @@ typedef struct {
     bool enableWatchdog;        /**< 使能看门狗 */
     bool enableBeep;            /**< 使能蜂鸣器 */
     uint8_t systemMode;         /**< 系统模式 (0=正常, 1=调试) */
-    
+
+    /* 灯管 & 场景配置（v2.0 新增） */
+    uint8_t  lampMode;          /**< 默认工作模式：0=手动 1=智能 2=应急 */
+    uint8_t  sceneMasks[REG_HOLD_SCENE_MASK_COUNT];   /**< 5 个场景 DO 位掩码 */
+    uint8_t  scheduleEnable;    /**< 调度段使能位掩码 bit0~7 */
+    uint8_t  reservedLampPad;   /**< 4 字节对齐填充 */
+
+    /* 调度表（v2.0 新增，8 段 × 6 字节 = 48 字节） */
+    struct {
+        uint16_t startHHMM;
+        uint16_t endHHMM;
+        uint8_t  sceneId;
+        uint8_t  dowMask;
+    } scheduleEntries[REG_HOLD_SCHEDULE_COUNT];
+
     /* 校验和（必须放在最后） */
     uint32_t checksum;          /**< CRC32校验和 */
 } SystemConfig_t;
@@ -141,6 +156,35 @@ bool configIsValid(void);
  * @return uint32_t CRC32校验和
  */
 uint32_t configCalculateChecksum(const SystemConfig_t* config);
+
+/**
+ * @brief 更新内存中的灯管模式
+ * @param mode 0=手动, 1=智能, 2=应急
+ */
+void configSetLampMode(uint8_t mode);
+
+/**
+ * @brief 更新内存中的某个场景掩码
+ * @param sceneId 1~5
+ * @param mask    bit0~4
+ */
+void configSetSceneMask(uint8_t sceneId, uint8_t mask);
+
+/**
+ * @brief 更新内存中的调度段
+ * @param index     0~7
+ * @param startHHMM 起始时间
+ * @param endHHMM   结束时间
+ * @param sceneId   场景 ID
+ * @param dowMask   星期掩码
+ */
+void configSetScheduleEntry(uint8_t index, uint16_t startHHMM, uint16_t endHHMM,
+                            uint8_t sceneId, uint8_t dowMask);
+
+/**
+ * @brief 更新内存中的调度使能掩码
+ */
+void configSetScheduleEnable(uint8_t mask);
 
 #endif /* CONFIG_MANAGER_H */
 

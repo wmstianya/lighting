@@ -15,6 +15,19 @@ extern "C" {
 
 #include "modbus_rtu_core.h"
 
+/* ==================== 功能开关 ==================== */
+/**
+ * @brief 双串口虚拟寄存器同步开关
+ * @details 
+ * - 设置为1：UART1和UART2的线圈/寄存器相互同步，状态一致
+ * - 设置为0：UART1和UART2的线圈/寄存器独立，互不影响
+ * @note 
+ * - 启用同步：两个串口看到的DO状态永远一致
+ * - 性能影响：<0.3μs/次操作，可忽略不计
+ * - 适用场景：两个串口控制同一组继电器
+ */
+#define ENABLE_DUAL_UART_SYNC   1   /* 0=独立模式, 1=同步模式 */
+
 /* ==================== 全局Modbus实例 ==================== */
 extern ModbusRTU_t modbusUart1;
 extern ModbusRTU_t modbusUart2;

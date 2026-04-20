@@ -112,7 +112,25 @@ static void setDefaultConfig(SystemConfig_t* config)
     config->enableWatchdog = true;
     config->enableBeep = true;
     config->systemMode = 0;
-    
+
+    /* 灯管 & 场景默认（v2.0） */
+    config->lampMode          = LAMP_MODE_VAL_MANUAL;
+    config->sceneMasks[0]     = SCENE_MASK_ALL_ON;
+    config->sceneMasks[1]     = SCENE_MASK_HALF_ECO;
+    config->sceneMasks[2]     = SCENE_MASK_MAIN_ONLY;
+    config->sceneMasks[3]     = SCENE_MASK_EMERGENCY;
+    config->sceneMasks[4]     = SCENE_MASK_ALL_OFF;
+    config->scheduleEnable    = 0x00;
+    config->reservedLampPad   = 0;
+
+    /* 默认调度表：全部清零、禁用 */
+    for (uint8_t i = 0; i < REG_HOLD_SCHEDULE_COUNT; i++) {
+        config->scheduleEntries[i].startHHMM = 0;
+        config->scheduleEntries[i].endHHMM   = 0;
+        config->scheduleEntries[i].sceneId   = SCENE_NONE;
+        config->scheduleEntries[i].dowMask   = 0;
+    }
+
     /* 计算校验和 */
     config->checksum = configCalculateChecksum(config);
 }
@@ -265,5 +283,36 @@ HAL_StatusTypeDef configSetPressure(float min, float max)
     systemConfig.pressureMax = max;
     
     return HAL_OK;
+}
+
+void configSetLampMode(uint8_t mode)
+{
+    if (mode <= LAMP_MODE_VAL_EMERGENCY) {
+        systemConfig.lampMode = mode;
+    }
+}
+
+void configSetSceneMask(uint8_t sceneId, uint8_t mask)
+{
+    if (sceneId >= SCENE_ALL_ON && sceneId <= SCENE_ID_MAX) {
+        systemConfig.sceneMasks[sceneId - 1] = (uint8_t)(mask & 0x1F);
+    }
+}
+
+void configSetScheduleEntry(uint8_t index, uint16_t startHHMM, uint16_t endHHMM,
+                            uint8_t sceneId, uint8_t dowMask)
+{
+    if (index >= REG_HOLD_SCHEDULE_COUNT) {
+        return;
+    }
+    systemConfig.scheduleEntries[index].startHHMM = startHHMM;
+    systemConfig.scheduleEntries[index].endHHMM   = endHHMM;
+    systemConfig.scheduleEntries[index].sceneId   = sceneId;
+    systemConfig.scheduleEntries[index].dowMask   = dowMask;
+}
+
+void configSetScheduleEnable(uint8_t mask)
+{
+    systemConfig.scheduleEnable = mask;
 }
 
