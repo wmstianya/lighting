@@ -98,6 +98,7 @@ set "APP_SRC=%APP_SRC% Core\Src\modbus_port_uart2.c"
 set "APP_SRC=%APP_SRC% Core\Src\modbus_app.c"
 set "APP_SRC=%APP_SRC% Core\Src\lamp_manager.c"
 set "APP_SRC=%APP_SRC% Core\Src\schedule.c"
+set "APP_SRC=%APP_SRC% Core\Src\dip_switch.c"
 set "APP_SRC=%APP_SRC% Core\Src\usart2_echo_test.c"
 
 :: ---------- HAL driver source files -----------------------------------------

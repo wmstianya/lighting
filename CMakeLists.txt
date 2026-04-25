@@ -76,6 +76,7 @@ set(APP_SRC
     # Lamp control (scene engine + scheduler)
     ${CMAKE_SOURCE_DIR}/Core/Src/lamp_manager.c
     ${CMAKE_SOURCE_DIR}/Core/Src/schedule.c
+    ${CMAKE_SOURCE_DIR}/Core/Src/dip_switch.c
     # Echo test (compiled but unused at RUN_MODE=10 — gc-sections removes dead code)
     ${CMAKE_SOURCE_DIR}/Core/Src/usart2_echo_test.c
 )

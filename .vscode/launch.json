@@ -1,0 +1,46 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "J-Link Flash & Debug (STM32F103C8)",
+            "type": "cortex-debug",
+            "request": "launch",
+            "servertype": "jlink",
+            "cwd": "${workspaceFolder}",
+            "executable": "${workspaceFolder}/build/output/lighting_ultra.elf",
+            "device": "STM32F103C8",
+            "interface": "swd",
+            "speed": 4000,
+            "runToEntryPoint": "main",
+            "serverpath": "D:/jlink/JLinkGDBServerCL.exe",
+            "jlinkGDBServerPath": "D:/jlink/JLinkGDBServerCL.exe",
+            "armToolchainPath": "C:/Users/Administrator.DESKTOP-T0UF4T8/gcc-arm/xpack-arm-none-eabi-gcc-13.2.1-1.1/bin",
+            "preLaunchTask": "gcc-build",
+            "showDevDebugOutput": "raw",
+            "swoConfig": {
+                "enabled": false
+            },
+            "overrideGDBServerStartupCommands": [],
+            "preConnectCommands": [
+                "set mi-async on"
+            ]
+        },
+        {
+            "name": "J-Link Attach (不重烧，直接附加)",
+            "type": "cortex-debug",
+            "request": "attach",
+            "servertype": "jlink",
+            "cwd": "${workspaceFolder}",
+            "executable": "${workspaceFolder}/build/output/lighting_ultra.elf",
+            "device": "STM32F103C8",
+            "interface": "swd",
+            "speed": 4000,
+            "serverpath": "D:/jlink/JLinkGDBServerCL.exe",
+            "jlinkGDBServerPath": "D:/jlink/JLinkGDBServerCL.exe",
+            "armToolchainPath": "C:/Users/Administrator.DESKTOP-T0UF4T8/gcc-arm/xpack-arm-none-eabi-gcc-13.2.1-1.1/bin",
+            "preConnectCommands": [
+                "set mi-async on"
+            ]
+        }
+    ]
+}

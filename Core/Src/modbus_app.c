@@ -187,14 +187,18 @@ static void dispatchRegWrite(uint16_t addr, uint16_t value, uint16_t *holdingReg
         return;
     }
 
-    /* 软 RTC 授时：HHMM 单独处理，DOW 与 HHMM 任一写入都触发一次同步 */
+    /* 软 RTC 授时：HHMM 单独处理，DOW 与 HHMM 任一写入都触发一次同步
+     * HMI 以小端（低字节在前）发送时间值，做字节翻转还原正确 HHMM：
+     *   例：HMI 发 8D 05 → 固件收到 0x8D05 → 翻转 → 0x058D = 1421 = 14:21 */
     if (addr == REG_HOLD_TIME_HHMM) {
-        uint8_t dow = (uint8_t)(holdingRegs[REG_HOLD_TIME_DOW] & 0xFF);
-        scheduleSyncTime(value, dow);
+        uint16_t hhmm = (uint16_t)(((value & 0xFF) << 8) | ((value >> 8) & 0xFF));
+        uint8_t  dow  = (uint8_t)(holdingRegs[REG_HOLD_TIME_DOW] & 0xFF);
+        scheduleSyncTime(hhmm, dow);
         return;
     }
     if (addr == REG_HOLD_TIME_DOW) {
-        uint16_t hhmm = holdingRegs[REG_HOLD_TIME_HHMM];
+        uint16_t rawHhmm = holdingRegs[REG_HOLD_TIME_HHMM];
+        uint16_t hhmm    = (uint16_t)(((rawHhmm & 0xFF) << 8) | ((rawHhmm >> 8) & 0xFF));
         scheduleSyncTime(hhmm, (uint8_t)(value & 0xFF));
         return;
     }

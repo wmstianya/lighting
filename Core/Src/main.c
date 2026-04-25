@@ -2,8 +2,8 @@
  * @Author: Administrator wmstianya@gmail.com
  * @Date: 2025-08-20 15:21:11
  * @LastEditors: Administrator wmstianya@gmail.com
- * @LastEditTime: 2025-11-12 15:20:08
- * @FilePath: \MDK-ARMe:\data\lighting_ultra\lighting_ultra\Core\Src\main.c
+ * @LastEditTime: 2026-04-24 16:22:21
+ * @FilePath: \lighting_ultra\Core\Src\main.c
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
 /* main.c — STM32F103C8T6 + HAL + USART1 DMA + TIM2 + IDLE 检帧 + 快照式读 */
@@ -22,6 +22,7 @@
 #include "water_level.h"
 #include "config_manager.h"
 #include "error_handler.h"
+#include "dip_switch.h"
 #if RUN_MODE_ECHO_TEST == 10
 #include "modbus_app.h"  /* 模块化Modbus应用 */
 #include "lamp_manager.h" /* 场景引擎 + 模式仲裁 */
@@ -93,6 +94,14 @@ int main(void)
     
     /* 初始化配置管理模块（从Flash加载或使用默认配置） */
     configManagerInit();
+
+    /* 读取拨码开关，用硬件地址覆盖 Flash 中的默认从站地址 */
+    dipSwitchInit();
+    {
+        uint8_t dipAddr = dipSwitchGetSlaveAddr();
+        configSetModbus(dipAddr, dipAddr);
+    }
+
     const SystemConfig_t* config = configGet();
     
     /* 初始化错误处理框架 */
@@ -165,8 +174,8 @@ int main(void)
 
         ModbusApp_Init();
 
-        /* 系统自检完成：蜂鸣器提示 */
-        beepSetTime(200);
+        /* 系统自检完成：蜂鸣器提示（1秒，便于现场确认固件已启动） */
+        beepSetTime(1000);
 
         while (1) {
             ModbusApp_Process();  /* 处理两个串口的Modbus */
@@ -181,17 +190,17 @@ int main(void)
             beepProcess();
 
             /* 压力传感器采集处理（100ms自动采样） */
-            pressureSensorProcess();
+            //pressureSensorProcess();
 
             /* 水位检测处理（50ms自动采样，带防抖） */
-            waterLevelProcess();
+            //waterLevelProcess();
 
             /* 定期更新传感器数据（示例） */
-            static uint32_t lastSensorUpdate = 0;
-            if (HAL_GetTick() - lastSensorUpdate > 1000) {
-                lastSensorUpdate = HAL_GetTick();
-                ModbusApp_UpdateSensorData();
-            }
+            //static uint32_t lastSensorUpdate = 0;
+            //if (HAL_GetTick() - lastSensorUpdate > 1000) {
+               // lastSensorUpdate = HAL_GetTick();
+                //ModbusApp_UpdateSensorData();
+           // }
 
             /* 喂狗：外部看门狗TPS3823-33DBVR */
             watchdogFeed();

@@ -32,9 +32,9 @@ extern "C" {
 #define REG_HOLD_SCENE_MASK_BASE        0x0010u   /**< 场景 1~5 的 DO 位掩码 */
 #define REG_HOLD_SCENE_MASK_COUNT       5u
 
-/* ---- 时间与调度区 (0x0020~0x0050) ---- */
-#define REG_HOLD_TIME_HHMM              0x0020u   /**< 软 RTC 时间 (HH*100+MM)，写=授时 */
-#define REG_HOLD_TIME_DOW               0x0021u   /**< 星期 0~6（0=周日） */
+/* ---- 时间与调度区 (0x002E~0x0050) ---- */
+#define REG_HOLD_TIME_HHMM              0x002Eu   /**< 软 RTC 时间 (HH*100+MM)，写=授时; addr=46 十进制 */
+#define REG_HOLD_TIME_DOW               0x002Fu   /**< 星期 0~6（0=周日）; addr=47 十进制 */
 
 #define REG_HOLD_SCHEDULE_BASE          0x0030u   /**< 调度表基址：每段 4 字 */
 #define REG_HOLD_SCHEDULE_ENTRY_WORDS   4u        /**< 每段占用 4 个寄存器 */
