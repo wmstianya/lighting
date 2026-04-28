@@ -44,23 +44,59 @@ static uint8_t  uart2_discreteInputs[(DI_COUNT + 7) / 8];
 /* ==================== 内部辅助 ==================== */
 
 /**
- * @brief 读 UART1 线圈虚拟寄存器中 COIL_LAMP 区的 5 位，组成位掩码
+ * @brief 读线圈虚拟寄存器中 COIL_LAMP 区的 5 位，组成 DO 位掩码
  */
 static uint8_t coilsToLampMask(const uint8_t *coils)
 {
-    return (uint8_t)(coils[0] & 0x1F);
+    uint8_t mask = 0;
+
+    for (uint8_t i = 0; i < COIL_LAMP_COUNT; i++) {
+        uint16_t bitAddr = COIL_LAMP_BASE + i;
+        uint8_t byteIndex = (uint8_t)(bitAddr / 8u);
+        uint8_t bitIndex = (uint8_t)(bitAddr % 8u);
+
+        if ((coils[byteIndex] >> bitIndex) & 0x01u) {
+            mask |= (uint8_t)(1u << i);
+        }
+    }
+
+    return mask;
 }
 
 /**
- * @brief 用实际硬件 DO 位图反向刷新两个 UART 的虚拟线圈 0~4
+ * @brief 用实际硬件 DO 位图反向刷新两个 UART 的虚拟灯光线圈
  */
 static void syncCoilsFromHardware(uint8_t actualBits)
 {
     uint8_t masked = (uint8_t)(actualBits & 0x1F);
-    uart1_coils[0] = (uint8_t)((uart1_coils[0] & ~0x1F) | masked);
-#if ENABLE_DUAL_UART_SYNC
-    uart2_coils[0] = (uint8_t)((uart2_coils[0] & ~0x1F) | masked);
-#endif
+
+    for (uint8_t i = 0; i < COIL_LAMP_COUNT; i++) {
+        uint16_t bitAddr = COIL_LAMP_BASE + i;
+        uint8_t byteIndex = (uint8_t)(bitAddr / 8u);
+        uint8_t bitIndex = (uint8_t)(bitAddr % 8u);
+        uint8_t bitMask = (uint8_t)(1u << bitIndex);
+
+        if (masked & (1u << i)) {
+            uart1_coils[byteIndex] |= bitMask;
+            uart2_coils[byteIndex] |= bitMask;
+        } else {
+            uart1_coils[byteIndex] &= (uint8_t)~bitMask;
+            uart2_coils[byteIndex] &= (uint8_t)~bitMask;
+        }
+    }
+}
+
+/**
+ * @brief 同步 LightMask 和 Relay1Cmd~Relay5Cmd 保持寄存器镜像
+ * @details 让 MCGS 的 5 个独立开关变量始终跟随实际 DO 位图。
+ */
+static void syncRelayRegsFromMask(uint16_t *holdingRegs, uint8_t actualBits)
+{
+    uint8_t masked = (uint8_t)(actualBits & 0x1F);
+    holdingRegs[REG_HOLD_LAMP_BITS_RW] = masked;
+    for (uint8_t i = 0; i < REG_HOLD_RELAY_CMD_COUNT; i++) {
+        holdingRegs[REG_HOLD_RELAY_CMD_BASE + i] = (masked >> i) & 0x01;
+    }
 }
 
 /**
@@ -111,8 +147,8 @@ static void handleCmdWrite(uint16_t cmd)
  */
 static void dispatchCoilWrite(uint16_t addr, uint8_t value, uint8_t *coilsArr)
 {
-    /* COIL_LAMP 0~4：拉出完整掩码走 lamp_manager 仲裁 */
-    if (addr < COIL_LAMP_COUNT) {
+    /* COIL_LAMP 0004~0008：拉出完整掩码走 lamp_manager 仲裁 */
+    if (addr >= COIL_LAMP_BASE && addr < (COIL_LAMP_BASE + COIL_LAMP_COUNT)) {
         uint8_t mask = coilsToLampMask(coilsArr);
         bool accepted = lampMgrRequestLampBits(mask, LAMP_SRC_MODBUS);
         if (!accepted) {
@@ -162,7 +198,24 @@ static void dispatchRegWrite(uint16_t addr, uint16_t value, uint16_t *holdingReg
     /* 位掩码直写 */
     if (addr == REG_HOLD_LAMP_BITS_RW) {
         (void)lampMgrRequestLampBits((uint8_t)(value & 0x1F), LAMP_SRC_MODBUS);
-        /* 无论是否接受，virtual coils 由 ModbusApp_UpdateSensorData 下一轮同步 */
+        syncRelayRegsFromMask(holdingRegs, lampMgrGetActualBits());
+        return;
+    }
+
+    /* Relay1Cmd~Relay5Cmd 独立 0/1 控制：只改变对应一路，保留其他位 */
+    if (addr >= REG_HOLD_RELAY_CMD_BASE &&
+        addr < (REG_HOLD_RELAY_CMD_BASE + REG_HOLD_RELAY_CMD_COUNT)) {
+        uint8_t relayIndex = (uint8_t)(addr - REG_HOLD_RELAY_CMD_BASE);
+        uint8_t mask = lampMgrGetActualBits();
+
+        if (value) {
+            mask |= (uint8_t)(1u << relayIndex);
+        } else {
+            mask &= (uint8_t)~(1u << relayIndex);
+        }
+
+        (void)lampMgrRequestLampBits(mask, LAMP_SRC_MODBUS);
+        syncRelayRegsFromMask(holdingRegs, lampMgrGetActualBits());
         return;
     }
 
@@ -240,7 +293,11 @@ static void uart1_onRegChanged(uint16_t addr, uint16_t value)
     dispatchRegWrite(addr, value, uart1_holdingRegs);
 #if ENABLE_DUAL_UART_SYNC
     /* 受控配置区同步到 UART2（场景掩码 / 调度表 / 使能 / 模式） */
-    if (addr <= REG_HOLD_SCHEDULE_ENABLE) {
+    if (addr == REG_HOLD_LAMP_BITS_RW ||
+        (addr >= REG_HOLD_RELAY_CMD_BASE &&
+         addr < (REG_HOLD_RELAY_CMD_BASE + REG_HOLD_RELAY_CMD_COUNT))) {
+        syncRelayRegsFromMask(uart2_holdingRegs, lampMgrGetActualBits());
+    } else if (addr <= REG_HOLD_SCHEDULE_ENABLE) {
         uart2_holdingRegs[addr] = uart1_holdingRegs[addr];
     }
 #endif
@@ -250,7 +307,11 @@ static void uart2_onRegChanged(uint16_t addr, uint16_t value)
 {
     dispatchRegWrite(addr, value, uart2_holdingRegs);
 #if ENABLE_DUAL_UART_SYNC
-    if (addr <= REG_HOLD_SCHEDULE_ENABLE) {
+    if (addr == REG_HOLD_LAMP_BITS_RW ||
+        (addr >= REG_HOLD_RELAY_CMD_BASE &&
+         addr < (REG_HOLD_RELAY_CMD_BASE + REG_HOLD_RELAY_CMD_COUNT))) {
+        syncRelayRegsFromMask(uart1_holdingRegs, lampMgrGetActualBits());
+    } else if (addr <= REG_HOLD_SCHEDULE_ENABLE) {
         uart1_holdingRegs[addr] = uart2_holdingRegs[addr];
     }
 #endif
@@ -265,7 +326,7 @@ static void uart2_onRegChanged(uint16_t addr, uint16_t value)
 static void seedConfigMirror(uint16_t *holdingRegs)
 {
     holdingRegs[REG_HOLD_MODE]         = (uint16_t)lampMgrGetMode();
-    holdingRegs[REG_HOLD_LAMP_BITS_RW] = lampMgrGetActualBits();
+    syncRelayRegsFromMask(holdingRegs, lampMgrGetActualBits());
     holdingRegs[REG_HOLD_SCENE_REQ]    = lampMgrGetActiveScene();
     holdingRegs[REG_HOLD_OVERRIDE_SEC] = 0;
 
@@ -314,7 +375,7 @@ void ModbusApp_Init(void)
     seedConfigMirror(uart1_holdingRegs);
     uart1_holdingRegs[REG_HOLD_SLAVE_ADDR] = config->modbus1SlaveAddr;
     uart1_inputRegs[REG_INPUT_MAP_VERSION] = MODBUS_REG_MAP_VERSION;
-    uart1_coils[0] = lampMgrGetActualBits() & 0x1F;
+    syncCoilsFromHardware(lampMgrGetActualBits());
 
     ModbusPort_UART1_Init(&modbusUart1);
     ModbusRTU_Init(&modbusUart1);
@@ -331,7 +392,7 @@ void ModbusApp_Init(void)
     seedConfigMirror(uart2_holdingRegs);
     uart2_holdingRegs[REG_HOLD_SLAVE_ADDR] = config->modbus2SlaveAddr;
     uart2_inputRegs[REG_INPUT_MAP_VERSION] = MODBUS_REG_MAP_VERSION;
-    uart2_coils[0] = lampMgrGetActualBits() & 0x1F;
+    syncCoilsFromHardware(lampMgrGetActualBits());
 
     ModbusPort_UART2_Init(&modbusUart2);
     ModbusRTU_Init(&modbusUart2);
@@ -447,18 +508,18 @@ void ModbusApp_UpdateSensorData(void)
 
     /* ---- 同步几个关键保持寄存器的"镜像值"方便主机读回 ---- */
     uart1_holdingRegs[REG_HOLD_MODE]         = (uint16_t)lampStatus.activeMode;
-    uart1_holdingRegs[REG_HOLD_LAMP_BITS_RW] = actualBits;
+    syncRelayRegsFromMask(uart1_holdingRegs, actualBits);
     uart1_holdingRegs[REG_HOLD_SCENE_REQ]    = lampStatus.activeScene;
     uart1_holdingRegs[REG_HOLD_TIME_HHMM]    = schedStatus.curHHMM;
     uart1_holdingRegs[REG_HOLD_TIME_DOW]     = schedStatus.curDow;
 
 #if ENABLE_DUAL_UART_SYNC
     uart2_holdingRegs[REG_HOLD_MODE]         = uart1_holdingRegs[REG_HOLD_MODE];
-    uart2_holdingRegs[REG_HOLD_LAMP_BITS_RW] = uart1_holdingRegs[REG_HOLD_LAMP_BITS_RW];
     uart2_holdingRegs[REG_HOLD_SCENE_REQ]    = uart1_holdingRegs[REG_HOLD_SCENE_REQ];
     uart2_holdingRegs[REG_HOLD_TIME_HHMM]    = uart1_holdingRegs[REG_HOLD_TIME_HHMM];
     uart2_holdingRegs[REG_HOLD_TIME_DOW]     = uart1_holdingRegs[REG_HOLD_TIME_DOW];
 #endif
+    syncRelayRegsFromMask(uart2_holdingRegs, actualBits);
 }
 
 /* ==================== 实例 getter ==================== */

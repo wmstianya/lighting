@@ -27,6 +27,8 @@ extern "C" {
 #define REG_HOLD_LAMP_BITS_RW           0x0001u   /**< 手动模式下直写 bit0~4 控灯 */
 #define REG_HOLD_SCENE_REQ              0x0002u   /**< 场景请求 1~5，写即切换 */
 #define REG_HOLD_OVERRIDE_SEC           0x0003u   /**< 智能模式临时手动接管秒数（0=不允许） */
+#define REG_HOLD_RELAY_CMD_BASE         0x0004u   /**< Relay1Cmd~Relay5Cmd 独立 0/1 控制基址 */
+#define REG_HOLD_RELAY_CMD_COUNT        5u        /**< 5 路继电器独立控制寄存器 */
 
 /* ---- 场景定义区 (0x0010~0x0014) ---- */
 #define REG_HOLD_SCENE_MASK_BASE        0x0010u   /**< 场景 1~5 的 DO 位掩码 */
@@ -92,10 +94,10 @@ extern "C" {
 #define REG_INPUT_COUNT                 64u
 
 /* ==================== 线圈 (FC 01/05/0F) ==================== */
-#define COIL_LAMP_BASE                  0u        /**< DO1~DO5 直写 */
+#define COIL_LAMP_BASE                  4u        /**< DO1~DO5 直写：兼容 MCGS 0区 0004~0008 */
 #define COIL_LAMP_COUNT                 5u
-#define COIL_BEEP_ONCE                  5u        /**< 写 1 触发一次鸣叫 */
-#define COIL_FACTORY_RESET              6u        /**< 写 1 恢复出厂 */
+#define COIL_BEEP_ONCE                  20u       /**< 写 1 触发一次鸣叫 */
+#define COIL_FACTORY_RESET              21u       /**< 写 1 恢复出厂 */
 #define COIL_COUNT                      80u       /**< 预留总数（80 bits = 10 bytes） */
 
 /* ==================== 离散输入 (FC 02) ==================== */
