@@ -23,6 +23,8 @@ static uint8_t         s_enableMask     = 0;
 static uint16_t        s_curHHMM        = 0;
 static uint8_t         s_curDow         = 0;
 static uint8_t         s_activeEntry    = 0xFF;
+static uint8_t         s_idleTickCount  = 0;
+static bool            s_prevOverrideActive = false;
 static bool            s_timeSynced     = false;
 static uint32_t        s_secondTickLast = 0;
 static uint32_t        s_minuteTickLast = 0;
@@ -81,6 +83,57 @@ static uint8_t findHitEntry(void)
 }
 
 /**
+ * @brief 智能模式未命中任何调度段时，确保灯光处于全关场景
+ */
+static void requestAllOffWhenIdle(void)
+{
+    LampMgrStatus_t lampStatus;
+
+    if (lampMgrGetMode() != LAMP_MODE_SMART) {
+        return;
+    }
+    lampMgrGetStatus(&lampStatus);
+    if (lampStatus.overrideActive) {
+        return;
+    }
+    if (lampStatus.activeScene == SCENE_ALL_OFF &&
+        lampStatus.actualBits == SCENE_MASK_ALL_OFF) {
+        return;
+    }
+    (void)lampMgrRequestScene(SCENE_ALL_OFF, LAMP_SRC_SCHEDULE);
+}
+
+/**
+ * @brief 连续未命中调度段时，延迟确认后执行空闲全关
+ */
+static void handleIdleTick(void)
+{
+    s_activeEntry = 0xFF;
+    if (s_idleTickCount < 2u) {
+        s_idleTickCount++;
+    }
+    if (s_idleTickCount >= 2u) {
+        requestAllOffWhenIdle();
+    }
+}
+
+/**
+ * @brief 覆盖期内暂停调度；覆盖结束后强制重新应用当前命中段
+ */
+static bool refreshOverrideState(void)
+{
+    LampMgrStatus_t lampStatus;
+
+    lampMgrGetStatus(&lampStatus);
+    if (s_prevOverrideActive && !lampStatus.overrideActive) {
+        s_activeEntry = 0xFF;
+        s_idleTickCount = 0;
+    }
+    s_prevOverrideActive = lampStatus.overrideActive;
+    return lampStatus.overrideActive;
+}
+
+/**
  * @brief 软 RTC 分钟进位处理
  */
 static void advanceOneMinute(void)
@@ -108,16 +161,24 @@ static void runSecondTick(void)
     if (!s_timeSynced) {
         /* 未授时前不做任何场景切换，避免 00:00 默认值触发误动作 */
         s_activeEntry = 0xFF;
+        s_idleTickCount = 0;
+        return;
+    }
+
+    if (refreshOverrideState()) {
         return;
     }
 
     uint8_t hit = findHitEntry();
+    if (hit == 0xFF) {
+        handleIdleTick();
+        return;
+    }
+
+    s_idleTickCount = 0;
     if (hit != s_activeEntry) {
         s_activeEntry = hit;
-        if (hit != 0xFF) {
-            (void)lampMgrRequestScene(s_entries[hit].sceneId, LAMP_SRC_SCHEDULE);
-        }
-        /* 未命中时保持上一场景不变，避免频繁切换 */
+        (void)lampMgrRequestScene(s_entries[hit].sceneId, LAMP_SRC_SCHEDULE);
     }
 }
 
@@ -130,6 +191,8 @@ void scheduleInit(void)
     s_curHHMM        = 0;
     s_curDow         = 0;
     s_activeEntry    = 0xFF;
+    s_idleTickCount  = 0;
+    s_prevOverrideActive = false;
     s_timeSynced     = false;
     s_secondTickLast = HAL_GetTick();
     s_minuteTickLast = s_secondTickLast;
@@ -166,6 +229,7 @@ void scheduleSyncTime(uint16_t hhmm, uint8_t dow)
     s_timeSynced     = true;
     s_minuteTickLast = HAL_GetTick();  /* 重置分钟计时起点，避免立刻 +1min */
     s_activeEntry    = 0xFF;           /* 强制下次 tick 重新判命中 */
+    s_idleTickCount  = 0;
 }
 
 void scheduleSetEntry(uint8_t index, const ScheduleEntry_t *entry)
@@ -175,6 +239,7 @@ void scheduleSetEntry(uint8_t index, const ScheduleEntry_t *entry)
     }
     s_entries[index] = *entry;
     s_activeEntry = 0xFF;  /* 配置变更，强制重判 */
+    s_idleTickCount = 0;
 }
 
 bool scheduleGetEntry(uint8_t index, ScheduleEntry_t *out)
@@ -190,6 +255,7 @@ void scheduleSetEnableMask(uint8_t mask)
 {
     s_enableMask = mask;
     s_activeEntry = 0xFF;
+    s_idleTickCount = 0;
 }
 
 uint8_t scheduleGetEnableMask(void)
